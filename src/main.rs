@@ -96,6 +96,7 @@ fn run_window() {
                 pf: pf.clone(),
                 catalog: catalog.clone(),
                 db: games::GameDb::builtin(),
+                tags: Arc::new(games::SteamGenres::builtin()),
                 config: config.clone(),
                 shared: shared.clone(),
                 store: store.clone(),

@@ -3,7 +3,7 @@
 use crate::catalog::{Catalog, Genre, Risk, Scope, Tweak};
 use crate::config::{Config, Tier, PRICE};
 use crate::engine::{Engine, TweakState};
-use crate::games::{GameDb, Source};
+use crate::games::GameDb;
 use crate::store::Store;
 use crate::watcher::{Command, Shared};
 use eframe::egui::{
@@ -216,8 +216,8 @@ impl App {
                         });
                         let mins = s.started.elapsed().as_secs() / 60;
                         ui.label(RichText::new(format!("{mins} min")).small().color(color::MUTED));
-                        if s.game.source == Source::Fullscreen && s.game.genre.is_none() {
-                            ui.label(RichText::new("Unknown game").small().color(color::WARN));
+                        if s.game.genre.is_none() {
+                            ui.label(RichText::new("Pick its type for extra optimizations").small().color(color::WARN));
                         }
                     });
                 });
@@ -253,6 +253,39 @@ impl App {
                 ui.label(RichText::new(format!("Tip: {tip}")).small().color(color::MUTED));
             }
         });
+    }
+
+    /// A windowed 3D app that might be a game: ask once, remember the answer.
+    fn candidate(&mut self, ui: &mut Ui) {
+        let Some(c) = self.shared.lock().unwrap().candidate.clone() else { return };
+        let exe = crate::platform::file_name_lower(&c.exe_path);
+        let mut answer = None;
+        card(ui, |ui| {
+            ui.label(RichText::new(format!("Is {} a game?", c.name)).strong().color(color::TEXT));
+            ui.label(RichText::new(format!("{exe} uses 3D graphics in a large window. Say yes and LeanFPS optimizes it while it runs.")).small().color(color::MUTED));
+            ui.horizontal(|ui| {
+                if primary_button(ui, "Yes, optimize it").clicked() {
+                    answer = Some(true);
+                }
+                if ui.button("Not a game").clicked() {
+                    answer = Some(false);
+                }
+            });
+        });
+        if let Some(yes) = answer {
+            {
+                let mut cfg = self.config.lock().unwrap();
+                if yes {
+                    cfg.confirmed_games.insert(exe);
+                } else {
+                    cfg.not_games.insert(exe);
+                }
+            }
+            self.save_config();
+            self.shared.lock().unwrap().candidate = None;
+            let _ = self.tx.send(Command::Restart);
+        }
+        ui.add_space(8.0);
     }
 
     fn welcome(&mut self, ui: &mut Ui) {
@@ -425,6 +458,7 @@ impl eframe::App for App {
             ui.add_space(10.0);
             self.game_card(ui);
             ui.add_space(8.0);
+            self.candidate(ui);
             if first_run {
                 self.welcome(ui);
                 ui.add_space(8.0);

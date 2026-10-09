@@ -54,6 +54,24 @@ impl Genre {
         Genre::Casual,
     ];
 
+    /// The snake_case id used in data files.
+    pub fn from_code(code: &str) -> Option<Genre> {
+        Genre::ALL.into_iter().find(|g| g.code() == code)
+    }
+
+    pub fn code(self) -> &'static str {
+        match self {
+            Genre::Shooter => "shooter",
+            Genre::Moba => "moba",
+            Genre::Strategy => "strategy",
+            Genre::OpenWorld => "open_world",
+            Genre::Racing => "racing",
+            Genre::Sandbox => "sandbox",
+            Genre::Mmo => "mmo",
+            Genre::Casual => "casual",
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Genre::Shooter => "Competitive shooter",

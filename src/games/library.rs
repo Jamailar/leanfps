@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 pub enum Store {
     Steam,
     Epic,
+    Gog,
+    BattleNet,
+    Ubisoft,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,6 +204,88 @@ pub fn epic_games(manifest_dir: &Path) -> Vec<Installed> {
     games
 }
 
+// ------------------------------------------------------------------ installed-programs list
+//
+// Patterns follow Playnite's library plugins (MIT): GOG games register as `<id>_is1` with
+// publisher "GOG.com"; Battle.net games have an uninstall string with `Battle.net` and `--uid=`;
+// Steam adds `Steam App <appid>` entries.
+
+use crate::platform::UninstallEntry;
+
+pub fn from_uninstall(entries: &[UninstallEntry]) -> Vec<Installed> {
+    let mut out = Vec::new();
+    for e in entries {
+        if e.install_location.trim().is_empty() || e.display_name.trim().is_empty() {
+            continue;
+        }
+        let key = e.key.as_str();
+        let store = if e.publisher == "GOG.com" && key.ends_with("_is1") && key[..key.len() - 4].chars().all(|c| c.is_ascii_digit()) {
+            Some((Store::Gog, None))
+        } else if e.uninstall_string.contains("Battle.net") && e.uninstall_string.contains("--uid=") {
+            Some((Store::BattleNet, None))
+        } else if let Some(id) = key.strip_prefix("Steam App ").and_then(|id| id.parse::<u32>().ok()) {
+            Some((Store::Steam, Some(id)))
+        } else {
+            None
+        };
+        if let Some((store, steam_appid)) = store {
+            let dir = e.install_location.trim().trim_matches('"').replace('/', "\\");
+            out.push(Installed { name: e.display_name.trim().to_string(), dir: PathBuf::from(dir), store, steam_appid, exe: None });
+        }
+    }
+    out
+}
+
+/// Ubisoft Connect installs: (folder name from registry, install dir). The launcher doesn't
+/// store a title there, so the folder name is used.
+pub fn from_ubisoft(installs: &[String]) -> Vec<Installed> {
+    installs
+        .iter()
+        .filter(|d| !d.trim().is_empty())
+        .map(|d| {
+            let dir = d.trim().replace('/', "\\");
+            let dir = dir.trim_end_matches('\\').to_string();
+            let name = dir.rsplit('\\').next().unwrap_or(&dir).to_string();
+            Installed { name, dir: PathBuf::from(dir), store: Store::Ubisoft, steam_appid: None, exe: None }
+        })
+        .collect()
+}
+
+// ------------------------------------------------------------------ folder conventions
+
+/// Install folders that only hold games: (marker, launcher). The folder right after the
+/// marker is the game's own folder and its name is used as the game name.
+const GAME_ROOTS: &[&str] = &[
+    "\\steamapps\\common\\",
+    "\\epic games\\",
+    "\\gog galaxy\\games\\",
+    "\\gog games\\",
+    "\\xboxgames\\",
+    "\\riot games\\",
+    "\\ubisoft game launcher\\games\\",
+    "\\ea games\\",
+    "\\rockstar games\\",
+    "\\amazon games\\library\\",
+    "\\itch\\apps\\",
+    "\\battlestate games\\",
+];
+
+/// If `exe_path` sits in a well-known game folder, the game's folder name.
+pub fn game_folder(exe_path: &str) -> Option<String> {
+    let p = normalize(exe_path);
+    for marker in GAME_ROOTS {
+        if let Some(i) = p.find(marker) {
+            let rest = &exe_path.replace('/', "\\")[i + marker.len()..];
+            let folder = rest.split('\\').next().unwrap_or("");
+            // The exe itself is not a folder (e.g. a launcher sitting in the root).
+            if !folder.is_empty() && rest.contains('\\') {
+                return Some(folder.to_string());
+            }
+        }
+    }
+    None
+}
+
 // ------------------------------------------------------------------ helpers
 
 pub fn normalize(p: &str) -> String {
@@ -224,7 +309,7 @@ pub fn owner_of<'a>(games: &'a [Installed], exe_path: &str) -> Option<&'a Instal
 }
 
 /// Scan everything we know about. Paths come from the platform layer on Windows.
-pub fn scan(steam_root: Option<&Path>, epic_manifests: Option<&Path>) -> Vec<Installed> {
+pub fn scan(steam_root: Option<&Path>, epic_manifests: Option<&Path>, uninstall: &[UninstallEntry], ubisoft: &[String]) -> Vec<Installed> {
     let mut all = Vec::new();
     if let Some(r) = steam_root {
         all.extend(steam_games(r));
@@ -232,6 +317,8 @@ pub fn scan(steam_root: Option<&Path>, epic_manifests: Option<&Path>) -> Vec<Ins
     if let Some(e) = epic_manifests {
         all.extend(epic_games(e));
     }
+    all.extend(from_uninstall(uninstall));
+    all.extend(from_ubisoft(ubisoft));
     let mut seen = HashMap::new();
     all.retain(|g| seen.insert(normalize(&g.dir.to_string_lossy()), ()).is_none());
     all.sort_by_key(|g| g.name.to_lowercase());
@@ -241,6 +328,40 @@ pub fn scan(steam_root: Option<&Path>, epic_manifests: Option<&Path>) -> Vec<Ins
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installed_programs_and_ubisoft() {
+        let e = |key: &str, name: &str, publisher: &str, loc: &str, un: &str| UninstallEntry {
+            key: key.into(),
+            display_name: name.into(),
+            publisher: publisher.into(),
+            install_location: loc.into(),
+            uninstall_string: un.into(),
+        };
+        let entries = vec![
+            e("1207658924_is1", "The Witcher 3", "GOG.com", r"C:\GOG Games\The Witcher 3", ""),
+            e("GOGPACK_x_is1", "Pack", "GOG.com", r"C:\x", ""),
+            e("Overwatch", "Overwatch", "Blizzard Entertainment", r"C:\Program Files (x86)\Overwatch", r#""C:\Battle.net\Battle.net.exe" --uid=prometheus --lang=enUS"#),
+            e("Steam App 570", "Dota 2", "Valve", r"D:\Steam\steamapps\common\dota 2 beta", ""),
+            e("{GUID}", "7-Zip", "Igor Pavlov", r"C:\Program Files\7-Zip", ""),
+            e("Steam App 1", "No location", "Valve", "", ""),
+        ];
+        let got = from_uninstall(&entries);
+        let names: Vec<_> = got.iter().map(|g| (g.name.as_str(), g.store, g.steam_appid)).collect();
+        assert_eq!(names, vec![("The Witcher 3", Store::Gog, None), ("Overwatch", Store::BattleNet, None), ("Dota 2", Store::Steam, Some(570))]);
+        let ubi = from_ubisoft(&["C:/Program Files (x86)/Ubisoft/Ubisoft Game Launcher/games/Tom Clancy's Rainbow Six Siege/".into()]);
+        assert_eq!(ubi[0].name, "Tom Clancy's Rainbow Six Siege");
+        assert!(owner_of(&ubi, r"C:\Program Files (x86)\Ubisoft\Ubisoft Game Launcher\games\Tom Clancy's Rainbow Six Siege\RainbowSix.exe").is_some());
+    }
+
+    #[test]
+    fn game_folders() {
+        assert_eq!(game_folder(r"C:\XboxGames\Forza Horizon 5\Content\ForzaHorizon5.exe").as_deref(), Some("Forza Horizon 5"));
+        assert_eq!(game_folder(r"C:\Riot Games\VALORANT\live\VALORANT.exe").as_deref(), Some("VALORANT"));
+        assert_eq!(game_folder(r"D:\Epic Games\Fortnite\FortniteGame\Binaries\Win64\x.exe").as_deref(), Some("Fortnite"));
+        assert_eq!(game_folder(r"C:\Riot Games\RiotClient.exe"), None);
+        assert_eq!(game_folder(r"C:\Program Files\Notepad++\notepad++.exe"), None);
+    }
 
     #[test]
     fn parses_libraryfolders() {
@@ -289,7 +410,7 @@ mod tests {
         .unwrap();
         std::fs::write(epic.join("broken.item"), "").unwrap();
 
-        let games = scan(Some(&steam), Some(&epic));
+        let games = scan(Some(&steam), Some(&epic), &[], &[]);
         let names: Vec<_> = games.iter().map(|g| g.name.as_str()).collect();
         assert_eq!(names, vec!["Counter-Strike 2", "Fortnite"]);
         let cs = &games[0];

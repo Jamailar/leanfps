@@ -390,3 +390,48 @@ steam = 945360
 name = "Fall Guys"
 genre = "casual"
 exe = ["FallGuys_client_game.exe"]
+
+# ---------------------------------------------------------------- emulators (genre depends on the game)
+[[game]]
+name = "Ryujinx (Switch)"
+exe = ["Ryujinx.exe"]
+
+[[game]]
+name = "yuzu (Switch)"
+exe = ["yuzu.exe", "suyu.exe", "sudachi.exe", "citron.exe"]
+
+[[game]]
+name = "Cemu (Wii U)"
+exe = ["Cemu.exe"]
+
+[[game]]
+name = "RPCS3 (PS3)"
+exe = ["rpcs3.exe"]
+
+[[game]]
+name = "Dolphin (GameCube/Wii)"
+exe = ["Dolphin.exe"]
+
+[[game]]
+name = "PCSX2 (PS2)"
+exe = ["pcsx2-qt.exe", "pcsx2.exe"]
+
+[[game]]
+name = "DuckStation (PS1)"
+exe = ["duckstation-qt-x64-ReleaseLTCG.exe"]
+
+[[game]]
+name = "PPSSPP (PSP)"
+exe = ["PPSSPPWindows64.exe"]
+
+[[game]]
+name = "RetroArch"
+exe = ["retroarch.exe"]
+
+[[game]]
+name = "xemu (Xbox)"
+exe = ["xemu.exe"]
+
+[[game]]
+name = "Xenia (Xbox 360)"
+exe = ["xenia.exe", "xenia_canary.exe"]

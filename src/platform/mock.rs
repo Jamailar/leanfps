@@ -21,6 +21,8 @@ pub struct MockState {
     pub purges: u32,
     pub foreground: Option<Foreground>,
     pub machine: Machine,
+    pub graphics: HashMap<u32, bool>,
+    pub overlay: String,
     /// Operations that should fail, e.g. "set_priority:42".
     pub fail: Vec<String>,
 }
@@ -36,6 +38,7 @@ impl MockPlatform {
             active: BALANCED.into(),
             mouse: [6, 10, 1],
             free_mb: 8000,
+            overlay: "00000000-0000-0000-0000-000000000000".into(),
             machine: Machine { laptop: false, os_build: 22631, cpu: "Mock CPU".into() },
             ..Default::default()
         };
@@ -55,6 +58,7 @@ impl MockPlatform {
                 pid: 200,
                 exe_path: r"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\bin\win64\cs2.exe".into(),
                 fullscreen: true,
+                coverage: 1.0,
             });
         }
         m
@@ -91,6 +95,15 @@ impl Platform for MockPlatform {
     fn reg_delete(&self, key: &str, name: &str) -> PResult<()> {
         self.with(|s| s.reg.remove(&(key.into(), name.into())));
         Ok(())
+    }
+    fn reg_subkeys(&self, key: &str) -> Vec<String> {
+        let prefix = format!("{key}\\");
+        let mut v: Vec<String> = self.with(|s| {
+            s.reg.keys().filter_map(|(k, _)| k.strip_prefix(&prefix).map(|r| r.split('\\').next().unwrap_or(r).to_string())).collect()
+        });
+        v.sort();
+        v.dedup();
+        v
     }
     fn power_active_scheme(&self) -> PResult<String> {
         Ok(self.with(|s| s.active.clone()))
@@ -157,6 +170,20 @@ impl Platform for MockPlatform {
     }
     fn foreground(&self) -> Option<Foreground> {
         self.with(|s| s.foreground.clone())
+    }
+    fn uses_graphics_api(&self, pid: u32) -> Option<bool> {
+        self.with(|s| s.graphics.get(&pid).copied())
+    }
+    fn power_overlay(&self) -> PResult<String> {
+        Ok(self.with(|s| s.overlay.clone()))
+    }
+    fn set_power_overlay(&self, overlay: &str) -> PResult<()> {
+        self.check("set_power_overlay")?;
+        self.with(|s| s.overlay = overlay.into());
+        Ok(())
+    }
+    fn self_usage(&self) -> (u64, u64) {
+        (0, 0)
     }
     fn machine(&self) -> Machine {
         self.with(|s| s.machine.clone())

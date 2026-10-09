@@ -2,7 +2,7 @@
 
 use crate::catalog::{Genre, Tweak};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub const TRIAL_SESSIONS: u32 = 3;
 pub const PRICE: &str = "$19";
@@ -15,6 +15,9 @@ pub struct Config {
     pub overrides: BTreeMap<String, bool>,
     /// Genre the user picked for a game, by lower-case exe file name.
     pub user_genres: HashMap<String, Genre>,
+    /// Apps the user confirmed are / are not games, by lower-case exe file name.
+    pub confirmed_games: HashSet<String>,
+    pub not_games: HashSet<String>,
     /// Game sessions started so far; the first few get every Pro feature.
     pub sessions_played: u32,
     /// Signed license from the LeanFPS account service (verified in `license`).
@@ -29,6 +32,8 @@ impl Default for Config {
             preset: "recommended".into(),
             overrides: BTreeMap::new(),
             user_genres: HashMap::new(),
+            confirmed_games: HashSet::new(),
+            not_games: HashSet::new(),
             sessions_played: 0,
             license: None,
             first_run_done: false,
@@ -64,6 +69,10 @@ impl Config {
         } else {
             self.overrides.insert(t.id.clone(), on);
         }
+    }
+
+    pub fn prefs(&self) -> crate::games::Prefs {
+        crate::games::Prefs { genres: self.user_genres.clone(), confirmed: self.confirmed_games.clone(), rejected: self.not_games.clone() }
     }
 
     pub fn tier(&self) -> Tier {

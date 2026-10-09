@@ -15,12 +15,24 @@ pub struct ProcInfo {
     pub exe_name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Foreground {
     pub pid: u32,
     pub exe_path: String,
     /// The window covers its whole monitor (exclusive or borderless fullscreen).
     pub fullscreen: bool,
+    /// Share of the monitor the window covers, 0.0 to 1.0.
+    pub coverage: f32,
+}
+
+/// One entry of the Windows "installed programs" list (Uninstall registry keys).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UninstallEntry {
+    pub key: String,
+    pub display_name: String,
+    pub publisher: String,
+    pub install_location: String,
+    pub uninstall_string: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -41,6 +53,8 @@ pub trait Platform: Send + Sync {
     fn reg_get(&self, key: &str, name: &str) -> PResult<Option<RegData>>;
     fn reg_set(&self, key: &str, name: &str, value: &RegData) -> PResult<()>;
     fn reg_delete(&self, key: &str, name: &str) -> PResult<()>;
+    /// Names of the direct subkeys of `key` (empty if it doesn't exist).
+    fn reg_subkeys(&self, key: &str) -> Vec<String>;
 
     fn power_active_scheme(&self) -> PResult<String>;
     fn power_scheme_exists(&self, scheme: &str) -> bool;
@@ -65,6 +79,14 @@ pub trait Platform: Send + Sync {
     fn purge_standby_list(&self) -> PResult<()>;
 
     fn foreground(&self) -> Option<Foreground>;
+    /// Whether the process has a 3D graphics API loaded (Direct3D, Vulkan, OpenGL).
+    /// `None` when the process can't be inspected (e.g. anti-cheat protected).
+    fn uses_graphics_api(&self, pid: u32) -> Option<bool>;
+    /// Current Windows power mode overlay ("Best performance" etc.), if the API exists.
+    fn power_overlay(&self) -> PResult<String>;
+    fn set_power_overlay(&self, overlay: &str) -> PResult<()>;
+    /// This process's CPU time in milliseconds and working set in MB.
+    fn self_usage(&self) -> (u64, u64);
     fn machine(&self) -> Machine;
     fn exe_icon(&self, exe_path: &str, size: usize) -> Option<Icon>;
 }
@@ -79,6 +101,33 @@ pub fn native() -> Box<dyn Platform> {
     {
         Box::new(mock::MockPlatform::demo())
     }
+}
+
+/// The installed-programs list, read from the registry.
+pub fn uninstall_entries(pf: &dyn Platform) -> Vec<UninstallEntry> {
+    let roots = [
+        "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+        "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+        "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+    ];
+    let text = |key: &str, name: &str| match pf.reg_get(key, name) {
+        Ok(Some(RegData::Sz(s))) => s,
+        _ => String::new(),
+    };
+    let mut out = Vec::new();
+    for root in roots {
+        for sub in pf.reg_subkeys(root) {
+            let k = format!("{root}\\{sub}");
+            out.push(UninstallEntry {
+                display_name: text(&k, "DisplayName"),
+                publisher: text(&k, "Publisher"),
+                install_location: text(&k, "InstallLocation"),
+                uninstall_string: text(&k, "UninstallString"),
+                key: sub,
+            });
+        }
+    }
+    out
 }
 
 /// Lower-case file name of a path, handling both separators.

@@ -179,6 +179,27 @@ impl Platform for WinPlatform {
         win(r, "delete registry value")
     }
 
+    fn reg_subkeys(&self, key: &str) -> Vec<String> {
+        use ::windows::Win32::System::Registry::RegEnumKeyExW;
+        let Ok((root, sub)) = split_key(key) else { return Vec::new() };
+        let mut hk = HKEY::default();
+        if unsafe { RegOpenKeyExW(root, &HSTRING::from(sub), None, KEY_READ, &mut hk) }.is_err() {
+            return Vec::new();
+        }
+        let hk = Key(hk);
+        let mut out = Vec::new();
+        let mut buf = [0u16; 256];
+        for i in 0.. {
+            let mut len = buf.len() as u32;
+            let r = unsafe { RegEnumKeyExW(hk.0, i, Some(PWSTR(buf.as_mut_ptr())), &mut len, None, None, None, None) };
+            if r.is_err() {
+                break;
+            }
+            out.push(String::from_utf16_lossy(&buf[..len as usize]));
+        }
+        out
+    }
+
     fn power_active_scheme(&self) -> PResult<String> {
         let mut p: *mut GUID = std::ptr::null_mut();
         win(unsafe { PowerGetActiveScheme(None, &mut p) }, "read active power plan")?;
@@ -320,7 +341,60 @@ impl Platform for WinPlatform {
             return None;
         }
         let exe_path = exe_path_of(pid)?;
-        Some(Foreground { pid, exe_path, fullscreen: covers_monitor(hwnd) })
+        let (fullscreen, coverage) = monitor_coverage(hwnd);
+        Some(Foreground { pid, exe_path, fullscreen, coverage })
+    }
+
+    fn uses_graphics_api(&self, pid: u32) -> Option<bool> {
+        use ::windows::Win32::System::Diagnostics::ToolHelp::{Module32FirstW, Module32NextW, MODULEENTRY32W, TH32CS_SNAPMODULE};
+        const APIS: [&str; 7] = ["d3d9.dll", "d3d10.dll", "d3d10_1.dll", "d3d11.dll", "d3d12.dll", "vulkan-1.dll", "opengl32.dll"];
+        let snap = Handle(unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid) }.ok()?);
+        let mut e = MODULEENTRY32W { dwSize: std::mem::size_of::<MODULEENTRY32W>() as u32, ..Default::default() };
+        let mut ok = unsafe { Module32FirstW(snap.0, &mut e) }.is_ok();
+        while ok {
+            let len = e.szModule.iter().position(|c| *c == 0).unwrap_or(e.szModule.len());
+            let name = String::from_utf16_lossy(&e.szModule[..len]).to_ascii_lowercase();
+            if APIS.contains(&name.as_str()) {
+                return Some(true);
+            }
+            ok = unsafe { Module32NextW(snap.0, &mut e) }.is_ok();
+        }
+        Some(false)
+    }
+
+    fn power_overlay(&self) -> PResult<String> {
+        type Get = unsafe extern "system" fn(*mut GUID) -> u32;
+        let f: Get = unsafe { std::mem::transmute(powrprof_fn(b"PowerGetEffectiveOverlayScheme\0")?) };
+        let mut g = GUID::zeroed();
+        let r = unsafe { f(&mut g) };
+        if r != 0 {
+            return Err(format!("read power mode failed ({r})"));
+        }
+        Ok(fmt_guid(&g))
+    }
+
+    fn set_power_overlay(&self, overlay: &str) -> PResult<()> {
+        type Set = unsafe extern "system" fn(GUID) -> u32;
+        let g = parse_guid(overlay)?;
+        let f: Set = unsafe { std::mem::transmute(powrprof_fn(b"PowerSetActiveOverlayScheme\0")?) };
+        let r = unsafe { f(g) };
+        if r != 0 {
+            return Err(format!("change power mode failed ({r})"));
+        }
+        Ok(())
+    }
+
+    fn self_usage(&self) -> (u64, u64) {
+        use ::windows::Win32::Foundation::FILETIME;
+        use ::windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+        use ::windows::Win32::System::Threading::GetProcessTimes;
+        let h = unsafe { GetCurrentProcess() };
+        let (mut c, mut x, mut k, mut u) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+        let ft = |f: FILETIME| ((f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64) / 10_000;
+        let cpu_ms = if unsafe { GetProcessTimes(h, &mut c, &mut x, &mut k, &mut u) }.is_ok() { ft(k) + ft(u) } else { 0 };
+        let mut m = PROCESS_MEMORY_COUNTERS { cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32, ..Default::default() };
+        let mem_mb = if unsafe { GetProcessMemoryInfo(h, &mut m, m.cb) }.is_ok() { (m.WorkingSetSize / (1024 * 1024)) as u64 } else { 0 };
+        (cpu_ms, mem_mb)
     }
 
     fn machine(&self) -> Machine {
@@ -352,18 +426,32 @@ impl Platform for WinPlatform {
     }
 }
 
-fn covers_monitor(hwnd: HWND) -> bool {
+/// (covers the whole monitor, share of the monitor covered)
+fn monitor_coverage(hwnd: HWND) -> (bool, f32) {
     let mut r = RECT::default();
     if unsafe { GetWindowRect(hwnd, &mut r) }.is_err() {
-        return false;
+        return (false, 0.0);
     }
     let mon = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
     let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
     if !unsafe { GetMonitorInfoW(mon, &mut mi) }.as_bool() {
-        return false;
+        return (false, 0.0);
     }
     let m = mi.rcMonitor;
-    r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom
+    let full = r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom;
+    let iw = (r.right.min(m.right) - r.left.max(m.left)).max(0) as f32;
+    let ih = (r.bottom.min(m.bottom) - r.top.max(m.top)).max(0) as f32;
+    let area = ((m.right - m.left) as f32 * (m.bottom - m.top) as f32).max(1.0);
+    (full, (iw * ih / area).min(1.0))
+}
+
+/// Undocumented powrprof exports (used by e.g. G-Helper). Looked up at runtime so a
+/// Windows build without them just reports the feature as unavailable.
+fn powrprof_fn(name: &[u8]) -> PResult<unsafe extern "system" fn() -> isize> {
+    use ::windows::core::PCSTR;
+    use ::windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+    let lib = unsafe { LoadLibraryW(&HSTRING::from("powrprof.dll")) }.map_err(|e| e.message().to_string())?;
+    unsafe { GetProcAddress(lib, PCSTR(name.as_ptr())) }.ok_or_else(|| "power mode is not supported on this Windows version".to_string())
 }
 
 fn enable_privilege(name: PCWSTR) -> PResult<()> {
