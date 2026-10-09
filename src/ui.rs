@@ -269,7 +269,19 @@ impl App {
                 });
                 if installed > 0 {
                     ui.add_space(4.0);
-                    ui.label(RichText::new(format!("Found {installed} installed games on Steam and Epic.")).small().color(color::MUTED));
+                    ui.label(RichText::new(format!("Found {installed} installed games.")).small().color(color::MUTED));
+                }
+                if let Some(last) = self.shared.lock().unwrap().last_game.clone() {
+                    let r = &last.record;
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(format!("Last game: {} · {:.0} FPS average · {:.0} FPS 1% low · {:.0} min", r.name, r.avg_fps, r.low1_fps, r.minutes))
+                            .small()
+                            .color(color::TEXT),
+                    );
+                    if let Some((avg, low, n)) = last.usual {
+                        ui.label(RichText::new(compare_line(r.avg_fps, r.low1_fps, avg, low, n)).small().color(color::ACCENT));
+                    }
                 }
                 return;
             };
@@ -320,6 +332,19 @@ impl App {
                 });
             });
             ui.add_space(6.0);
+            if let Some(f) = s.fps.filter(|f| f.frames > 0) {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(format!("{:.0}", f.live)).font(FontId::proportional(22.0)).strong().color(color::TEXT));
+                    ui.label(RichText::new("FPS now").small().color(color::MUTED));
+                    ui.add_space(8.0);
+                    ui.label(RichText::new(format!("{:.0} avg · {:.0} 1% low", f.avg, f.low1)).small().color(color::TEXT));
+                });
+                if let Some((avg, low, n)) = s.usual {
+                    if f.frames > 3000 {
+                        ui.label(RichText::new(compare_line(f.avg, f.low1, avg, low, n)).small().color(color::ACCENT));
+                    }
+                }
+            }
             let ok = s.applied.iter().filter(|a| a.result.is_ok()).count();
             let genre_items: Vec<_> = s.applied.iter().filter(|a| a.genre_specific).collect();
             let general: Vec<_> = s.applied.iter().filter(|a| !a.genre_specific).collect();
@@ -681,6 +706,17 @@ fn risk_dot(ui: &mut Ui, r: Risk) {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
     ui.painter().circle_filled(rect.center(), 3.5, c);
     resp.on_hover_text(r.label());
+}
+
+fn compare_line(avg: f64, low: f64, usual_avg: f64, usual_low: f64, n: usize) -> String {
+    let pct = |a: f64, b: f64| if b > 0.0 { (a / b - 1.0) * 100.0 } else { 0.0 };
+    format!(
+        "{:+.0}% average, {:+.0}% 1% low vs your last {} session{} of this game",
+        pct(avg, usual_avg),
+        pct(low, usual_low),
+        n,
+        if n == 1 { "" } else { "s" }
+    )
 }
 
 fn applied_line(ui: &mut Ui, a: &crate::session::Applied, strong: bool) {

@@ -136,6 +136,20 @@ pub fn run() -> i32 {
     }
     out!(log, "free memory: {:?} MB", pf.free_memory_mb());
 
+    out!(log, "\n== frame counter (300 presents from a hidden Direct3D 11 WARP window)");
+    #[cfg(windows)]
+    match present_test() {
+        Ok((frames, avg)) if frames >= 250 => out!(log, "OK   counted {frames} frame times, {avg:.0} FPS average"),
+        Ok((frames, avg)) => {
+            failures += 1;
+            out!(log, "FAIL counted only {frames} frame times ({avg:.0} FPS)");
+        }
+        Err(e) => {
+            failures += 1;
+            out!(log, "FAIL {e}");
+        }
+    }
+
     out!(log, "\n== overhead (budgets: detection tick < 2 ms, memory < 40 MB without window)");
     {
         use crate::games::{classify, GameDb, Prefs, SteamGenres};
@@ -192,4 +206,53 @@ pub fn run() -> i32 {
     } else {
         1
     }
+}
+
+/// Present 300 frames from this process and count them with the ETW frame counter.
+#[cfg(windows)]
+fn present_test() -> Result<(u64, f64), String> {
+    use ::windows::core::{w, HSTRING};
+    use ::windows::Win32::Foundation::{HMODULE, HWND};
+    use ::windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_WARP;
+    use ::windows::Win32::Graphics::Direct3D11::{D3D11CreateDeviceAndSwapChain, D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION};
+    use ::windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_MODE_DESC, DXGI_SAMPLE_DESC};
+    use ::windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_PRESENT, DXGI_SWAP_CHAIN_DESC, DXGI_SWAP_EFFECT_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT};
+    use ::windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use ::windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DefWindowProcW, RegisterClassW, WINDOW_EX_STYLE, WNDCLASSW, WS_OVERLAPPEDWINDOW};
+
+    unsafe extern "system" fn wndproc(h: HWND, m: u32, w: ::windows::Win32::Foundation::WPARAM, l: ::windows::Win32::Foundation::LPARAM) -> ::windows::Win32::Foundation::LRESULT {
+        DefWindowProcW(h, m, w, l)
+    }
+    let capture = crate::frames::PresentCapture::start(std::process::id())?;
+    unsafe {
+        let inst = GetModuleHandleW(None).map_err(|e| e.message().to_string())?;
+        let wc = WNDCLASSW { lpfnWndProc: Some(wndproc), hInstance: inst.into(), lpszClassName: w!("LeanFPS.PresentTest"), ..Default::default() };
+        RegisterClassW(&wc);
+        let hwnd: HWND = CreateWindowExW(WINDOW_EX_STYLE::default(), w!("LeanFPS.PresentTest"), &HSTRING::from("present test"), WS_OVERLAPPEDWINDOW, 0, 0, 320, 240, None, None, Some(inst.into()), None)
+            .map_err(|e| e.message().to_string())?;
+        let desc = DXGI_SWAP_CHAIN_DESC {
+            BufferDesc: DXGI_MODE_DESC { Width: 320, Height: 240, Format: DXGI_FORMAT_R8G8B8A8_UNORM, ..Default::default() },
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
+            BufferCount: 1,
+            OutputWindow: hwnd,
+            Windowed: true.into(),
+            SwapEffect: DXGI_SWAP_EFFECT_DISCARD,
+            Flags: 0,
+        };
+        let mut sc: Option<IDXGISwapChain> = None;
+        D3D11CreateDeviceAndSwapChain(None, D3D_DRIVER_TYPE_WARP, HMODULE::default(), D3D11_CREATE_DEVICE_FLAG(0), None, D3D11_SDK_VERSION, Some(&desc), Some(&mut sc), None, None, None)
+            .map_err(|e| format!("could not create a Direct3D 11 device: {}", e.message()))?;
+        let sc = sc.ok_or("no swap chain")?;
+        // Give the ETW session a moment to start delivering events.
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        for _ in 0..300 {
+            let _ = sc.Present(0, DXGI_PRESENT(0));
+            std::thread::sleep(std::time::Duration::from_millis(4));
+        }
+    }
+    // Real-time sessions flush about once a second.
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    let st = capture.finish();
+    Ok((st.frames, st.avg_fps()))
 }

@@ -22,6 +22,25 @@ pub struct SessionView {
     pub started: Instant,
     pub purges: u32,
     pub trial: bool,
+    /// Frame counter: None when unavailable (not admin, unsupported API).
+    pub fps: Option<Fps>,
+    /// Earlier sessions of this game: (avg FPS, 1% low, sessions).
+    pub usual: Option<(f64, f64, usize)>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Fps {
+    pub live: f64,
+    pub avg: f64,
+    pub low1: f64,
+    pub frames: u64,
+}
+
+/// What the last finished session measured, for the "last game" line.
+#[derive(Debug, Clone)]
+pub struct LastGame {
+    pub record: crate::frames::Record,
+    pub usual: Option<(f64, f64, usize)>,
 }
 
 #[derive(Default)]
@@ -30,6 +49,7 @@ pub struct Shared {
     pub installed: Vec<Installed>,
     /// A windowed 3D app that may be a game; the UI asks the user.
     pub candidate: Option<GameInfo>,
+    pub last_game: Option<LastGame>,
     /// Problems the user should see (e.g. leftovers that could not be restored).
     pub notices: Vec<String>,
     /// Bumped whenever something changes, so the UI knows to redraw.
@@ -62,6 +82,7 @@ impl Watcher {
             s.notices.extend(errs.into_iter().map(|e| format!("Could not restore after last crash: {e}")));
         });
         let mut current: Option<Session> = None;
+        let mut capture: Option<Capture> = None;
         // Trial games are counted once per game process, not again when settings restart the session.
         let mut counted: Option<u32> = None;
         // Foreground process already judged not to be a game, and when: skip re-checking it
@@ -71,6 +92,7 @@ impl Watcher {
             match rx.recv_timeout(TICK) {
                 Ok(Command::Stop) | Err(RecvTimeoutError::Disconnected) => {
                     if let Some(s) = current.take() {
+                        self.finish_capture(&s, capture.take());
                         s.end(&*self.pf, &self.store);
                     }
                     self.update(|s| s.session = None);
@@ -79,13 +101,14 @@ impl Watcher {
                 Ok(Command::Restart) => {
                     judged = None;
                     if let Some(s) = current.take() {
+                        self.finish_capture(&s, capture.take());
                         s.end(&*self.pf, &self.store);
                     }
                     self.update(|s| s.session = None);
                 }
                 Err(RecvTimeoutError::Timeout) => {}
             }
-            self.tick(&mut current, &mut counted, &mut judged);
+            self.tick(&mut current, &mut capture, &mut counted, &mut judged);
         }
     }
 
@@ -98,22 +121,22 @@ impl Watcher {
         (self.on_change)();
     }
 
-    fn tick(&self, current: &mut Option<Session>, counted: &mut Option<u32>, judged: &mut Option<(u32, Instant)>) {
+    fn tick(&self, current: &mut Option<Session>, capture: &mut Option<Capture>, counted: &mut Option<u32>, judged: &mut Option<(u32, Instant)>) {
         if let Some(s) = current.as_mut() {
             if s.alive(&*self.pf) {
-                let before = s.purges;
                 s.tick(&*self.pf);
-                if s.purges != before {
-                    let n = s.purges;
-                    self.update(|sh| {
-                        if let Some(v) = sh.session.as_mut() {
-                            v.purges = n;
-                        }
-                    });
-                }
+                let n = s.purges;
+                let fps = capture.as_ref().map(capture_fps);
+                self.update(|sh| {
+                    if let Some(v) = sh.session.as_mut() {
+                        v.purges = n;
+                        v.fps = fps;
+                    }
+                });
                 return;
             }
             let s = current.take().unwrap();
+            self.finish_capture(&s, capture.take());
             let errs = s.end(&*self.pf, &self.store);
             self.update(|sh| {
                 sh.session = None;
@@ -161,9 +184,74 @@ impl Watcher {
             let _ = self.store.save("config.json", &*cfg);
         }
         let icon = self.pf.exe_icon(&game.exe_path, 64);
-        let view = SessionView { game, icon, applied: s.applied.clone(), started: s.started, purges: 0, trial };
+        *capture = start_capture(fg.pid);
+        let history: Vec<crate::frames::Record> = self.store.load(HISTORY).unwrap_or_default();
+        let usual = crate::frames::usual(&history, &crate::platform::file_name_lower(&game.exe_path));
+        let fps = capture.as_ref().map(capture_fps);
+        let view = SessionView { game, icon, applied: s.applied.clone(), started: s.started, purges: 0, trial, fps, usual };
         *current = Some(s);
         self.update(|sh| sh.session = Some(view));
+    }
+}
+
+const HISTORY: &str = "history.json";
+const HISTORY_MAX: usize = 500;
+
+#[cfg(windows)]
+type Capture = crate::frames::PresentCapture;
+#[cfg(not(windows))]
+type Capture = ();
+
+#[cfg(windows)]
+fn start_capture(pid: u32) -> Option<Capture> {
+    crate::frames::PresentCapture::start(pid).ok()
+}
+#[cfg(not(windows))]
+fn start_capture(_pid: u32) -> Option<Capture> {
+    None
+}
+
+#[cfg(windows)]
+fn capture_fps(c: &Capture) -> Fps {
+    let st = c.stats();
+    Fps { live: c.live_fps(), avg: st.avg_fps(), low1: st.low_fps(1.0), frames: st.frames }
+}
+#[cfg(not(windows))]
+fn capture_fps(_c: &Capture) -> Fps {
+    Fps::default()
+}
+
+impl Watcher {
+    /// Stop counting frames and keep the session in the history if it was long enough.
+    fn finish_capture(&self, s: &Session, capture: Option<Capture>) {
+        let Some(c) = capture else { return };
+        #[cfg(windows)]
+        let stats = c.finish();
+        #[cfg(not(windows))]
+        let stats = {
+            let _ = c;
+            crate::frames::FrameStats::default()
+        };
+        if stats.frames < 600 {
+            return;
+        }
+        let exe = crate::platform::file_name_lower(&s.game.exe_path);
+        let started = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+            .saturating_sub(s.started.elapsed().as_secs());
+        let ok = s.applied.iter().filter(|a| a.result.is_ok()).count();
+        let record = crate::frames::Record::from_stats(&exe, &s.game.name, started, &stats, ok);
+        let mut history: Vec<crate::frames::Record> = self.store.load(HISTORY).unwrap_or_default();
+        let usual = crate::frames::usual(&history, &exe);
+        history.push(record.clone());
+        if history.len() > HISTORY_MAX {
+            let extra = history.len() - HISTORY_MAX;
+            history.drain(..extra);
+        }
+        let _ = self.store.save(HISTORY, &history);
+        self.update(|sh| sh.last_game = Some(LastGame { record, usual }));
     }
 }
 

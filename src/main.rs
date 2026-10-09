@@ -3,6 +3,7 @@
 mod catalog;
 mod config;
 mod engine;
+mod frames;
 mod games;
 mod license;
 mod pergame;
