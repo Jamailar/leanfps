@@ -1,0 +1,203 @@
+# LeanFPS tweak catalog.
+#
+# Rules for adding a tweak:
+# - It must have a real mechanism. No placebo (e.g. requesting timer resolution from our own
+#   process does nothing for the game since Windows 10 2004).
+# - Never weaken security: no Defender, HVCI/VBS, firewall, Windows Update or CPU-mitigation changes.
+# - Session tweaks are reverted when the game exits. Persistent tweaks keep the user's real
+#   previous value and can be reverted one by one.
+# - Every URL in `sources` was opened and checked (2026-10-09).
+# - "recommended" only contains low-risk tweaks that need no reboot.
+
+[[preset]]
+id = "recommended"
+title = "Recommended"
+summary = "Low-risk changes that need no reboot."
+
+[[preset]]
+id = "competitive"
+title = "Competitive"
+summary = "Recommended plus higher game priority for every game."
+
+[[preset]]
+id = "laptop"
+title = "Laptop balanced"
+summary = "Keeps your power plan. Optimizes only while a game runs."
+
+# ---------------------------------------------------------------- persistent
+
+[[tweak]]
+id = "power_high_performance"
+title = "High performance power plan"
+summary = "Stops the CPU from dropping into low clocks between frames."
+detail = "Switches the active Windows power plan to High performance. Your previous plan is saved and restored when you turn this off. Not offered on laptops, where it costs battery and heat."
+scope = "persistent"
+risk = "low"
+presets = ["recommended", "competitive"]
+form = "desktop"
+sources = ["https://learn.microsoft.com/windows-hardware/customize/power-settings/configure-power-settings"]
+actions = [{ type = "power_scheme", scheme = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c" }]
+
+[[tweak]]
+id = "core_parking_off"
+title = "Keep all CPU cores awake"
+summary = "Turns off core parking on AC power so threads don't wait for a parked core."
+detail = "Sets 'Processor performance core parking min cores' to 100% on the active power plan while plugged in. Battery value is unchanged."
+scope = "persistent"
+risk = "low"
+presets = ["recommended", "competitive"]
+form = "desktop"
+sources = ["https://learn.microsoft.com/windows-hardware/customize/power-settings/options-for-core-parking-cpmincores"]
+actions = [{ type = "power_setting", subgroup = "54533251-82be-4824-96c1-47b60b740d00", setting = "0cc5b647-c1df-4637-891a-dec35c318583", ac = 100 }]
+
+[[tweak]]
+id = "game_mode_on"
+title = "Windows Game Mode"
+summary = "Windows pauses update installs and some background work while you play."
+detail = "Turns on Game Mode (HKCU\\Software\\Microsoft\\GameBar AutoGameModeEnabled = 1). It is on by default in Windows 11; this makes sure it was not turned off."
+scope = "persistent"
+risk = "low"
+presets = ["recommended", "competitive", "laptop"]
+actions = [
+  { type = "registry", key = "HKCU\\Software\\Microsoft\\GameBar", name = "AutoGameModeEnabled", value = { dword = 1 } },
+  { type = "registry", key = "HKCU\\Software\\Microsoft\\GameBar", name = "AllowAutoGameMode", value = { dword = 1 } },
+]
+
+[[tweak]]
+id = "game_dvr_off"
+title = "Turn off background recording"
+summary = "Stops Game Bar from constantly recording the last minutes of gameplay."
+detail = "Turns off Game DVR / background capture (HKCU\\System\\GameConfigStore GameDVR_Enabled = 0, AppCaptureEnabled = 0). Background recording encodes video while you play. Manual screenshots still work."
+scope = "persistent"
+risk = "low"
+presets = ["recommended", "competitive", "laptop"]
+sources = ["https://raw.githubusercontent.com/ChrisTitusTech/winutil/main/config/tweaks.json"]
+actions = [
+  { type = "registry", key = "HKCU\\System\\GameConfigStore", name = "GameDVR_Enabled", value = { dword = 0 } },
+  { type = "registry", key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR", name = "AppCaptureEnabled", value = { dword = 0 } },
+]
+
+[[tweak]]
+id = "hags_on"
+title = "Hardware-accelerated GPU scheduling"
+summary = "Lets the GPU manage its own memory scheduling. Needed for DLSS Frame Generation."
+detail = "Sets HKLM\\SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers HwSchMode = 2. Takes effect after a restart. Results vary by GPU and driver: measure before and after."
+scope = "persistent"
+risk = "medium"
+reboot = true
+pro = true
+min_build = 19041
+sources = ["https://devblogs.microsoft.com/directx/hardware-accelerated-gpu-scheduling/"]
+actions = [{ type = "registry", key = "HKLM\\SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers", name = "HwSchMode", value = { dword = 2 } }]
+
+[[tweak]]
+id = "mpo_off"
+title = "Turn off multiplane overlay (MPO)"
+summary = "Fixes flicker and stutter some multi-monitor setups get with MPO."
+detail = "Sets HKLM\\SOFTWARE\\Microsoft\\Windows\\Dwm OverlayTestMode = 5. Only useful if you see flicker or stutter on a second monitor. Takes effect after a restart."
+scope = "persistent"
+risk = "medium"
+reboot = true
+pro = true
+sources = ["https://nvidia.custhelp.com/app/answers/detail/a_id/5157", "https://raw.githubusercontent.com/ChrisTitusTech/winutil/main/config/tweaks.json"]
+actions = [{ type = "registry", key = "HKLM\\SOFTWARE\\Microsoft\\Windows\\Dwm", name = "OverlayTestMode", value = { dword = 5 } }]
+
+# ---------------------------------------------------------------- session (every game)
+
+[[tweak]]
+id = "keep_awake"
+title = "Keep PC and screen awake"
+summary = "No sleep or screen-off during long loading screens or cutscenes."
+detail = "Holds a Windows execution-state request while the game runs. Released as soon as the game exits."
+scope = "session"
+risk = "low"
+presets = ["recommended", "competitive", "laptop"]
+actions = [{ type = "keep_awake" }]
+
+[[tweak]]
+id = "game_priority_above_normal"
+title = "Game first: above-normal priority"
+summary = "The game gets CPU time before ordinary background apps."
+detail = "Sets the game's CPU priority class to Above normal while it runs. Never uses Realtime. Some anti-cheat protected games refuse this; LeanFPS then skips it."
+scope = "session"
+risk = "low"
+pro = true
+presets = ["recommended", "laptop"]
+actions = [{ type = "game_priority", class = "above_normal" }]
+
+[[tweak]]
+id = "game_throttling_off"
+title = "No power throttling for the game"
+summary = "Windows won't move the game to efficiency cores or slow it down to save power."
+detail = "Opts the game process out of EcoQoS power throttling while it runs. Matters most on Intel hybrid CPUs and laptops."
+scope = "session"
+risk = "low"
+pro = true
+presets = ["recommended", "competitive", "laptop"]
+sources = ["https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessinformation"]
+actions = [{ type = "game_power_throttling_off" }]
+
+[[tweak]]
+id = "background_apps_lower"
+title = "Quiet background apps"
+summary = "Browsers, cloud sync and launchers drop to below-normal priority while you play."
+detail = "Lowers the CPU priority of known background apps (browsers, OneDrive, Dropbox, game launchers) while the game runs, and restores them when it exits. Voice chat apps are left alone."
+scope = "session"
+risk = "low"
+pro = true
+presets = ["recommended", "competitive", "laptop"]
+actions = [{ type = "background_priority", class = "below_normal", processes = [
+  "chrome.exe", "msedge.exe", "firefox.exe", "opera.exe", "brave.exe", "vivaldi.exe",
+  "OneDrive.exe", "Dropbox.exe", "GoogleDriveFS.exe",
+  "EpicGamesLauncher.exe", "EADesktop.exe", "upc.exe", "GalaxyClient.exe",
+  "Spotify.exe", "ms-teams.exe",
+] }]
+
+[[tweak]]
+id = "game_priority_high"
+title = "High priority for every game"
+summary = "Stronger than above-normal. Can make other apps feel slow while you play."
+detail = "Sets every detected game to High priority while it runs. The genre profiles already do this for competitive games."
+scope = "session"
+risk = "medium"
+pro = true
+presets = ["competitive"]
+actions = [{ type = "game_priority", class = "high" }]
+
+# ---------------------------------------------------------------- genre profiles
+
+[[tweak]]
+id = "shooter_mouse_accel_off"
+title = "Raw aim: mouse acceleration off"
+summary = "The same hand movement always turns the same distance."
+detail = "Turns off 'Enhance pointer precision' while the game runs and restores your desktop setting when it exits. Most shooters use raw input already; this covers the ones that don't and menus."
+scope = "session"
+risk = "low"
+pro = true
+genres = ["shooter"]
+presets = ["recommended", "competitive"]
+actions = [{ type = "mouse_acceleration", enabled = false }]
+
+[[tweak]]
+id = "competitive_priority_high"
+title = "High priority for competitive play"
+summary = "Shooters and MOBAs get CPU time ahead of everything except system tasks."
+detail = "Sets the game to High priority (never Realtime) while it runs."
+scope = "session"
+risk = "low"
+pro = true
+genres = ["shooter", "moba", "racing"]
+presets = ["recommended", "competitive"]
+actions = [{ type = "game_priority", class = "high" }]
+
+[[tweak]]
+id = "standby_purge"
+title = "Free up standby memory"
+summary = "Clears cached standby memory when free RAM runs low, to avoid stutter in big worlds."
+detail = "While the game runs, if free memory drops below 1 GB, LeanFPS asks Windows to purge the standby list (at most once every 5 minutes). Cached files are reloaded from disk when needed."
+scope = "session"
+risk = "low"
+pro = true
+genres = ["open_world", "sandbox", "mmo"]
+presets = ["recommended", "competitive", "laptop"]
+actions = [{ type = "standby_purge", below_free_mb = 1024 }]

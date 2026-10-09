@@ -1,0 +1,392 @@
+# Known games: executable names -> name and genre.
+# Executable names were collected from public sources and still need checking on real installs
+# (see README "Game database"). A wrong name only means the game falls back to library/fullscreen
+# detection; it never changes what a tweak does.
+
+[[genre]]
+id = "shooter"
+tips = [
+  "Turn on NVIDIA Reflex or AMD Anti-Lag in the game's graphics settings.",
+  "Cap FPS a little below what your GPU can hold so it never sits at 100%: lower latency, steadier frames.",
+]
+
+[[genre]]
+id = "moba"
+tips = [
+  "Cap FPS at a multiple of your monitor's refresh rate for even frame pacing.",
+]
+
+[[genre]]
+id = "strategy"
+tips = [
+  "Late-game turns are CPU-bound: close browser tabs before long sessions.",
+]
+
+[[genre]]
+id = "open_world"
+tips = [
+  "The first run after a driver update stutters while shaders compile. Play 10 minutes before judging.",
+  "Upscaling (DLSS, FSR, XeSS) on Quality usually gains more FPS than any system tweak.",
+]
+
+[[genre]]
+id = "racing"
+tips = [
+  "Steady frame times matter more than peak FPS: cap FPS at your refresh rate.",
+]
+
+[[genre]]
+id = "sandbox"
+tips = [
+  "Render distance is the biggest FPS lever in sandbox games.",
+]
+
+[[genre]]
+id = "mmo"
+tips = [
+  "Crowded cities are CPU-bound: lower 'max visible players' before graphics quality.",
+]
+
+[[genre]]
+id = "casual"
+tips = [
+  "On laptops, cap FPS to your refresh rate to keep fans quiet and battery longer.",
+]
+
+# ---------------------------------------------------------------- shooters
+[[game]]
+name = "Counter-Strike 2"
+genre = "shooter"
+exe = ["cs2.exe"]
+steam = 730
+
+[[game]]
+name = "VALORANT"
+genre = "shooter"
+exe = ["VALORANT-Win64-Shipping.exe"]
+
+[[game]]
+name = "Apex Legends"
+genre = "shooter"
+exe = ["r5apex.exe", "r5apex_dx12.exe"]
+steam = 1172470
+
+[[game]]
+name = "Fortnite"
+genre = "shooter"
+exe = ["FortniteClient-Win64-Shipping.exe"]
+
+[[game]]
+name = "Call of Duty"
+genre = "shooter"
+exe = ["cod.exe", "ModernWarfare.exe", "BlackOps6.exe"]
+
+[[game]]
+name = "Overwatch 2"
+genre = "shooter"
+exe = ["Overwatch.exe"]
+steam = 2357570
+
+[[game]]
+name = "Rainbow Six Siege"
+genre = "shooter"
+exe = ["RainbowSix.exe", "RainbowSix_Vulkan.exe"]
+steam = 359550
+
+[[game]]
+name = "PUBG: Battlegrounds"
+genre = "shooter"
+exe = ["TslGame.exe"]
+steam = 578080
+
+[[game]]
+name = "Escape from Tarkov"
+genre = "shooter"
+exe = ["EscapeFromTarkov.exe"]
+
+[[game]]
+name = "THE FINALS"
+genre = "shooter"
+exe = ["Discovery.exe"]
+steam = 2073850
+
+[[game]]
+name = "Marvel Rivals"
+genre = "shooter"
+exe = ["Marvel-Win64-Shipping.exe"]
+steam = 2767030
+
+[[game]]
+name = "Battlefield 2042"
+genre = "shooter"
+exe = ["BF2042.exe"]
+steam = 1517290
+
+[[game]]
+name = "Destiny 2"
+genre = "shooter"
+exe = ["destiny2.exe"]
+steam = 1085660
+
+[[game]]
+name = "Team Fortress 2"
+genre = "shooter"
+exe = ["tf_win64.exe"]
+steam = 440
+
+[[game]]
+name = "Halo Infinite"
+genre = "shooter"
+exe = ["HaloInfinite.exe"]
+steam = 1240440
+
+[[game]]
+name = "Helldivers 2"
+genre = "shooter"
+exe = ["helldivers2.exe"]
+steam = 553850
+
+[[game]]
+name = "Warframe"
+genre = "shooter"
+exe = ["Warframe.x64.exe"]
+steam = 230410
+
+# ---------------------------------------------------------------- MOBA
+[[game]]
+name = "League of Legends"
+genre = "moba"
+exe = ["League of Legends.exe"]
+
+[[game]]
+name = "Dota 2"
+genre = "moba"
+exe = ["dota2.exe"]
+steam = 570
+
+# ---------------------------------------------------------------- strategy
+[[game]]
+name = "Sid Meier's Civilization VI"
+genre = "strategy"
+exe = ["CivilizationVI.exe", "CivilizationVI_DX12.exe"]
+steam = 289070
+
+[[game]]
+name = "StarCraft II"
+genre = "strategy"
+exe = ["SC2_x64.exe"]
+
+[[game]]
+name = "Age of Empires IV"
+genre = "strategy"
+exe = ["RelicCardinal.exe"]
+steam = 1466860
+
+[[game]]
+name = "Total War: WARHAMMER III"
+genre = "strategy"
+exe = ["Warhammer3.exe"]
+steam = 1142710
+
+[[game]]
+name = "Hearts of Iron IV"
+genre = "strategy"
+exe = ["hoi4.exe"]
+steam = 394360
+
+[[game]]
+name = "Cities: Skylines II"
+genre = "strategy"
+exe = ["Cities2.exe"]
+steam = 949230
+
+# ---------------------------------------------------------------- open world & RPG
+[[game]]
+name = "Grand Theft Auto V"
+genre = "open_world"
+exe = ["GTA5.exe", "GTA5_Enhanced.exe"]
+steam = 271590
+
+[[game]]
+name = "Red Dead Redemption 2"
+genre = "open_world"
+exe = ["RDR2.exe"]
+steam = 1174180
+
+[[game]]
+name = "Cyberpunk 2077"
+genre = "open_world"
+exe = ["Cyberpunk2077.exe"]
+steam = 1091500
+
+[[game]]
+name = "ELDEN RING"
+genre = "open_world"
+exe = ["eldenring.exe"]
+steam = 1245620
+
+[[game]]
+name = "Baldur's Gate 3"
+genre = "open_world"
+exe = ["bg3.exe", "bg3_dx11.exe"]
+steam = 1086940
+
+[[game]]
+name = "Starfield"
+genre = "open_world"
+exe = ["Starfield.exe"]
+steam = 1716740
+
+[[game]]
+name = "Hogwarts Legacy"
+genre = "open_world"
+exe = ["HogwartsLegacy.exe"]
+steam = 990080
+
+[[game]]
+name = "The Witcher 3: Wild Hunt"
+genre = "open_world"
+exe = ["witcher3.exe"]
+steam = 292030
+
+[[game]]
+name = "Black Myth: Wukong"
+genre = "open_world"
+exe = ["b1-Win64-Shipping.exe"]
+steam = 2358720
+
+[[game]]
+name = "Monster Hunter Wilds"
+genre = "open_world"
+exe = ["MonsterHunterWilds.exe"]
+steam = 2246340
+
+[[game]]
+name = "Genshin Impact"
+genre = "open_world"
+exe = ["GenshinImpact.exe"]
+
+[[game]]
+name = "Sea of Thieves"
+genre = "open_world"
+exe = ["SoTGame.exe"]
+steam = 1172620
+
+# ---------------------------------------------------------------- racing & sports
+[[game]]
+name = "Rocket League"
+genre = "racing"
+exe = ["RocketLeague.exe"]
+steam = 252950
+
+[[game]]
+name = "Forza Horizon 5"
+genre = "racing"
+exe = ["ForzaHorizon5.exe"]
+steam = 1551360
+
+[[game]]
+name = "Assetto Corsa Competizione"
+genre = "racing"
+exe = ["AC2-Win64-Shipping.exe"]
+steam = 805550
+
+[[game]]
+name = "iRacing"
+genre = "racing"
+exe = ["iRacingSim64DX11.exe"]
+
+# ---------------------------------------------------------------- sandbox & survival
+[[game]]
+name = "Minecraft"
+genre = "sandbox"
+exe = ["Minecraft.Windows.exe"]
+
+[[game]]
+name = "Minecraft: Java Edition"
+genre = "sandbox"
+exe = ["javaw.exe"]
+path_contains = ["minecraft"]
+
+[[game]]
+name = "Roblox"
+genre = "sandbox"
+exe = ["RobloxPlayerBeta.exe"]
+
+[[game]]
+name = "Rust"
+genre = "sandbox"
+exe = ["RustClient.exe"]
+steam = 252490
+
+[[game]]
+name = "Palworld"
+genre = "sandbox"
+exe = ["Palworld-Win64-Shipping.exe"]
+steam = 1623730
+
+[[game]]
+name = "Terraria"
+genre = "sandbox"
+exe = ["Terraria.exe"]
+steam = 105600
+
+[[game]]
+name = "Valheim"
+genre = "sandbox"
+exe = ["valheim.exe"]
+steam = 892970
+
+# ---------------------------------------------------------------- online RPG
+[[game]]
+name = "World of Warcraft"
+genre = "mmo"
+exe = ["Wow.exe"]
+
+[[game]]
+name = "FINAL FANTASY XIV Online"
+genre = "mmo"
+exe = ["ffxiv_dx11.exe"]
+steam = 39210
+
+[[game]]
+name = "Lost Ark"
+genre = "mmo"
+exe = ["LOSTARK.exe"]
+steam = 1599340
+
+[[game]]
+name = "Path of Exile 2"
+genre = "mmo"
+exe = ["PathOfExile.exe", "PathOfExile_x64Steam.exe"]
+steam = 2694490
+
+[[game]]
+name = "Diablo IV"
+genre = "mmo"
+exe = ["Diablo IV.exe"]
+steam = 2344520
+
+# ---------------------------------------------------------------- casual & indie
+[[game]]
+name = "Stardew Valley"
+genre = "casual"
+exe = ["Stardew Valley.exe"]
+steam = 413150
+
+[[game]]
+name = "Lethal Company"
+genre = "casual"
+exe = ["Lethal Company.exe"]
+steam = 1966720
+
+[[game]]
+name = "Among Us"
+genre = "casual"
+exe = ["Among Us.exe"]
+steam = 945360
+
+[[game]]
+name = "Fall Guys"
+genre = "casual"
+exe = ["FallGuys_client_game.exe"]
