@@ -50,6 +50,30 @@ cargo build --release --target x86_64-pc-windows-gnu
 On Linux `cargo run` opens the window against a demo mock (CS2 "running") for UI work.
 Data goes to `%ProgramData%\LeanFPS` (override with `LEANFPS_DATA_DIR`).
 
+## Build on your own Windows PC
+
+1. Install **Visual Studio Build Tools 2022** with the workload "Desktop development with C++"
+   (MSVC compiler + Windows SDK).
+2. Install Rust from https://rustup.rs (default toolchain `stable-x86_64-pc-windows-msvc`).
+3. In a new terminal:
+
+   ```powershell
+   git clone https://github.com/Jamailar/leanfps
+   cd leanfps
+   cargo test
+   cargo build --release
+   ```
+
+   The result is `target\release\leanfps.exe` (single file, about 6.5 MB). The first build
+   downloads dependencies and takes a few minutes.
+4. Double-click `leanfps.exe`. Windows asks for administrator rights (needed for power plans
+   and process priority). The exe is not code-signed yet, so SmartScreen may show
+   "Windows protected your PC": choose *More info* > *Run anyway*.
+
+Undo everything at any time with the **Restore all** button or `leanfps.exe --restore-all`.
+Settings and the undo journal are in `C:\ProgramData\LeanFPS`. Do not run `--selftest` on your
+own PC: it is meant for throwaway test machines.
+
 Command line:
 
 ```
