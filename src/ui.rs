@@ -224,45 +224,33 @@ impl App {
             });
             ui.add_space(6.0);
             let ok = s.applied.iter().filter(|a| a.result.is_ok()).count();
-            let genre_ok = s.applied.iter().filter(|a| a.genre_specific && a.result.is_ok()).count();
+            let genre_items: Vec<_> = s.applied.iter().filter(|a| a.genre_specific).collect();
+            let general: Vec<_> = s.applied.iter().filter(|a| !a.genre_specific).collect();
             let mut line = format!("{ok} optimizations active");
-            if let Some(g) = s.game.genre {
-                if genre_ok > 0 {
-                    line.push_str(&format!(" · {genre_ok} for {}", g.label().to_lowercase()));
-                }
+            if let (Some(g), false) = (s.game.genre, genre_items.is_empty()) {
+                line.push_str(&format!(" · {} for {}", genre_items.iter().filter(|a| a.result.is_ok()).count(), g.label().to_lowercase()));
             }
             ui.label(RichText::new(line).small().strong().color(color::ACCENT));
-            for a in &s.applied {
-                ui.horizontal(|ui| {
-                    match &a.result {
-                        Ok(()) => check_mark(ui, color::ACCENT),
-                        Err(_) => check_mark(ui, color::WARN),
-                    }
-                    let mut t = RichText::new(&a.title).small().color(color::TEXT);
-                    if a.genre_specific {
-                        t = t.strong();
-                    }
-                    let r = ui.label(t);
-                    if let Err(e) = &a.result {
-                        r.on_hover_text(format!("Skipped: {e}"));
-                    }
-                });
+            for a in &genre_items {
+                applied_line(ui, a, true);
+            }
+            if !general.is_empty() {
+                let id = ui.make_persistent_id("general-applied");
+                egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
+                    .show_header(ui, |ui| {
+                        ui.label(RichText::new(format!("{} general optimizations", general.len())).small().color(color::MUTED));
+                    })
+                    .body(|ui| {
+                        for a in &general {
+                            applied_line(ui, a, false);
+                        }
+                    });
             }
             if s.purges > 0 {
                 ui.label(RichText::new(format!("Standby memory freed {} time{}", s.purges, if s.purges == 1 { "" } else { "s" })).small().color(color::MUTED));
             }
-            if let Some(g) = s.game.genre {
-                let tips = self.db.tips(g);
-                if !tips.is_empty() {
-                    ui.add_space(4.0);
-                    for tip in tips {
-                        ui.label(RichText::new(format!("Tip: {tip}")).small().color(color::MUTED));
-                    }
-                }
-            }
-            if s.trial {
-                ui.add_space(4.0);
-                ui.label(RichText::new("Pro trial game: every optimization is on.").small().color(color::PRO));
+            if let Some(tip) = s.game.genre.and_then(|g| self.db.tips(g).first()) {
+                ui.label(RichText::new(format!("Tip: {tip}")).small().color(color::MUTED));
             }
         });
     }
@@ -272,23 +260,25 @@ impl App {
             let cfg = self.config.lock().unwrap();
             self.catalog().tweak.iter().filter(|t| t.scope == Scope::Persistent && cfg.active(t)).count()
         };
+        let mut go = false;
         card(ui, |ui| {
-            ui.label(RichText::new("Optimize this PC").strong().color(color::TEXT));
-            ui.label(
-                RichText::new(format!(
-                    "The Recommended preset changes {n} Windows settings now and more while a game runs. Each change is listed below and can be undone."
-                ))
-                .small()
-                .color(color::MUTED),
-            );
-            ui.add_space(6.0);
-            if primary_button(ui, "Optimize now").clicked() {
-                self.config.lock().unwrap().first_run_done = true;
-                self.save_config();
-                let changed = self.sync();
-                self.notify(format!("Done. {changed} settings changed. Start a game to see the rest."), true);
-            }
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.set_max_width(ui.available_width() - 96.0);
+                    ui.label(RichText::new(format!("Apply {n} recommended system settings")).strong().color(color::TEXT));
+                    ui.label(RichText::new("Every change is listed below and can be undone.").small().color(color::MUTED));
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    go = primary_button(ui, "Optimize").clicked();
+                });
+            });
         });
+        if go {
+            self.config.lock().unwrap().first_run_done = true;
+            self.save_config();
+            let changed = self.sync();
+            self.notify(format!("Done. {changed} settings changed. Start a game to see the rest."), true);
+        }
     }
 
     fn preset_row(&mut self, ui: &mut Ui) {
@@ -481,6 +471,10 @@ fn style(ctx: &egui::Context) {
     ctx.global_style_mut(|s| {
         s.spacing.item_spacing = Vec2::new(6.0, 4.0);
         s.spacing.button_padding = Vec2::new(12.0, 6.0);
+        use egui::TextStyle;
+        s.text_styles.insert(TextStyle::Small, FontId::proportional(11.5));
+        s.text_styles.insert(TextStyle::Body, FontId::proportional(13.5));
+        s.text_styles.insert(TextStyle::Button, FontId::proportional(13.5));
     });
 }
 
@@ -519,6 +513,20 @@ fn risk_dot(ui: &mut Ui, r: Risk) {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
     ui.painter().circle_filled(rect.center(), 3.5, c);
     resp.on_hover_text(r.label());
+}
+
+fn applied_line(ui: &mut Ui, a: &crate::session::Applied, strong: bool) {
+    ui.horizontal(|ui| {
+        check_mark(ui, if a.result.is_ok() { color::ACCENT } else { color::WARN });
+        let mut t = RichText::new(&a.title).small().color(color::TEXT);
+        if strong {
+            t = t.strong();
+        }
+        let r = ui.label(t);
+        if let Err(e) = &a.result {
+            r.on_hover_text(format!("Skipped: {e}"));
+        }
+    });
 }
 
 fn check_mark(ui: &mut Ui, c: Color32) {

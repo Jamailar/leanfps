@@ -58,6 +58,8 @@ impl Watcher {
             s.notices.extend(errs.into_iter().map(|e| format!("Could not restore after last crash: {e}")));
         });
         let mut current: Option<Session> = None;
+        // Trial games are counted once per game process, not again when settings restart the session.
+        let mut counted: Option<u32> = None;
         loop {
             match rx.recv_timeout(TICK) {
                 Ok(Command::Stop) | Err(RecvTimeoutError::Disconnected) => {
@@ -75,7 +77,7 @@ impl Watcher {
                 }
                 Err(RecvTimeoutError::Timeout) => {}
             }
-            self.tick(&mut current);
+            self.tick(&mut current, &mut counted);
         }
     }
 
@@ -88,7 +90,7 @@ impl Watcher {
         (self.on_change)();
     }
 
-    fn tick(&self, current: &mut Option<Session>) {
+    fn tick(&self, current: &mut Option<Session>, counted: &mut Option<u32>) {
         if let Some(s) = current.as_mut() {
             if s.alive(&*self.pf) {
                 let before = s.purges;
@@ -121,7 +123,8 @@ impl Watcher {
         };
         let cfg_snapshot = self.config.lock().unwrap().clone();
         let s = Session::start(&*self.pf, &self.catalog, &cfg_snapshot, &self.store, game.clone(), fg.pid);
-        if trial {
+        if trial && *counted != Some(fg.pid) {
+            *counted = Some(fg.pid);
             let mut cfg = self.config.lock().unwrap();
             cfg.sessions_played += 1;
             let _ = self.store.save("config.json", &*cfg);
