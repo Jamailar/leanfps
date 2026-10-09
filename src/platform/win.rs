@@ -544,3 +544,25 @@ pub fn focus_existing_window() {
         }
     }
 }
+
+/// Start LeanFPS at sign-in, elevated and hidden in the tray, via Task Scheduler
+/// (`schtasks /RL HIGHEST` avoids a UAC prompt at every boot).
+pub fn set_autostart(on: bool) -> PResult<()> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut cmd = std::process::Command::new("schtasks");
+    if on {
+        let tr = format!("\"{}\" --tray", exe.display());
+        cmd.args(["/Create", "/F", "/TN", "LeanFPS", "/SC", "ONLOGON", "/RL", "HIGHEST", "/TR", &tr]);
+    } else {
+        cmd.args(["/Delete", "/F", "/TN", "LeanFPS"]);
+    }
+    let out = cmd.creation_flags(CREATE_NO_WINDOW).output().map_err(|e| e.to_string())?;
+    // Deleting a task that doesn't exist is fine.
+    if out.status.success() || !on {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}

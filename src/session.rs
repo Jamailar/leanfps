@@ -48,8 +48,9 @@ impl Session {
             last_purge: None,
             purges: 0,
         };
+        let machine = pf.machine();
         for t in catalog.tweak.iter().filter(|t| t.scope == Scope::Session) {
-            if !cfg.active(t) || !t.applies_to_genre(s.game.genre) {
+            if !cfg.active(t) || !t.applies_to_genre(s.game.genre) || !t.fits(&machine) {
                 continue;
             }
             let mut result = Ok(());
@@ -188,6 +189,14 @@ mod tests {
             assert!(!st.keep_awake);
         });
         assert!(!store.path("session.json").exists());
+    }
+
+    #[test]
+    fn laptop_only_tweaks_skip_desktops() {
+        let (pf, cat, cfg, store) = setup();
+        let s = Session::start(&pf, &cat, &cfg, &store, &mut PerGame::load(&store), game(Some(Genre::Shooter)), 2);
+        assert!(!s.applied.iter().any(|a| a.tweak == "power_mode_best" || a.tweak == "laptop_fast_gpu"));
+        s.end(&pf, &store);
     }
 
     #[test]

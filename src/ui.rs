@@ -47,6 +47,11 @@ pub struct App {
     /// don't touch the system. Refreshed after changes and every few seconds.
     states: HashMap<String, TweakState>,
     states_at: Option<Instant>,
+    tray: crate::tray::Tray,
+    tray_rx: std::sync::mpsc::Receiver<crate::tray::TrayEvent>,
+    tray_active: Option<bool>,
+    quitting: bool,
+    autostart_choice: bool,
 }
 
 impl App {
@@ -61,7 +66,29 @@ impl App {
         tx: Sender<Command>,
     ) -> App {
         style(&cc.egui_ctx);
-        App { engine, db, config, shared, store, per_game, tx, icons: HashMap::new(), expanded: HashSet::new(), toast: None, seen_version: 0, states: HashMap::new(), states_at: None }
+        let (ttx, tray_rx) = std::sync::mpsc::channel();
+        let ctx = cc.egui_ctx.clone();
+        let tray = crate::tray::Tray::start(ttx, Box::new(move || ctx.request_repaint()));
+        App {
+            engine,
+            db,
+            config,
+            shared,
+            store,
+            per_game,
+            tx,
+            icons: HashMap::new(),
+            expanded: HashSet::new(),
+            toast: None,
+            seen_version: 0,
+            states: HashMap::new(),
+            states_at: None,
+            tray,
+            tray_rx,
+            tray_active: None,
+            quitting: false,
+            autostart_choice: true,
+        }
     }
 
     fn state(&mut self, id: &str) -> TweakState {
@@ -171,6 +198,7 @@ impl App {
                     Tier::Trial { left } => (format!("Pro trial · {left} game{} left", if left == 1 { "" } else { "s" }), color::PRO),
                     Tier::Free => ("Free".to_string(), color::MUTED),
                 };
+                self.settings_menu(ui);
                 pill(ui, &text, c);
                 let cfg = self.config.lock().unwrap().clone();
                 let wanted: Vec<String> =
@@ -184,6 +212,44 @@ impl App {
                     pill(ui, &format!("System {done}/{}", wanted.len()), c);
                 }
             });
+        });
+    }
+
+    fn set_autostart(&mut self, on: bool) {
+        #[cfg(windows)]
+        if let Err(e) = crate::platform::win::set_autostart(on) {
+            self.notify(format!("Could not change start with Windows: {e}"), false);
+            return;
+        }
+        self.config.lock().unwrap().start_with_windows = on;
+        self.save_config();
+    }
+
+    fn settings_menu(&mut self, ui: &mut Ui) {
+        let (rect, resp) = ui.allocate_exact_size(Vec2::new(26.0, 22.0), Sense::click());
+        let c = if resp.hovered() { color::TEXT } else { color::MUTED };
+        for dx in [-6.0, 0.0, 6.0] {
+            ui.painter().circle_filled(rect.center() + Vec2::new(dx, 0.0), 2.0, c);
+        }
+        let resp = resp.on_hover_text("Settings");
+        egui::Popup::menu(&resp).show(|ui| {
+            let cfg = self.config.lock().unwrap().clone();
+            let mut tray = cfg.close_to_tray;
+            if ui.checkbox(&mut tray, "Keep running in the tray when closed").changed() {
+                self.config.lock().unwrap().close_to_tray = tray;
+                self.save_config();
+            }
+            let mut auto = cfg.start_with_windows;
+            if ui.checkbox(&mut auto, "Start with Windows").changed() {
+                self.set_autostart(auto);
+            }
+            let mut top = cfg.always_on_top;
+            if ui.checkbox(&mut top, "Keep window on top").changed() {
+                self.config.lock().unwrap().always_on_top = top;
+                self.save_config();
+                let level = if top { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal };
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
+            }
         });
     }
 
@@ -331,6 +397,7 @@ impl App {
                     ui.set_max_width(ui.available_width() - 96.0);
                     ui.label(RichText::new(format!("Apply {n} recommended system settings")).strong().color(color::TEXT));
                     ui.label(RichText::new("Every change is listed below and can be undone.").small().color(color::MUTED));
+                    ui.checkbox(&mut self.autostart_choice, RichText::new("Start with Windows and optimize games automatically").small());
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     go = primary_button(ui, "Optimize").clicked();
@@ -340,6 +407,9 @@ impl App {
         if go {
             self.config.lock().unwrap().first_run_done = true;
             self.save_config();
+            if self.autostart_choice {
+                self.set_autostart(true);
+            }
             let changed = self.sync();
             self.notify(format!("Done. {changed} settings changed. Start a game to see the rest."), true);
         }
@@ -468,6 +538,38 @@ impl App {
 }
 
 impl eframe::App for App {
+    /// Runs even while the window is hidden in the tray.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        use crate::tray::TrayEvent;
+        while let Ok(ev) = self.tray_rx.try_recv() {
+            match ev {
+                TrayEvent::Open => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
+                TrayEvent::RestoreAll => self.restore_all(),
+                TrayEvent::Quit => {
+                    self.quitting = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+        if ctx.input(|i| i.viewport().close_requested()) && !self.quitting && self.config.lock().unwrap().close_to_tray {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+        let session = self.shared.lock().unwrap().session.as_ref().map(|s| s.game.name.clone());
+        if self.tray_active != Some(session.is_some()) {
+            self.tray_active = Some(session.is_some());
+            let tip = match &session {
+                Some(name) => format!("LeanFPS: optimizing {name}"),
+                None => "LeanFPS: waiting for a game".to_string(),
+            };
+            self.tray.set_active(session.is_some(), &tip);
+        }
+    }
+
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let (version, has_session) = {
             let s = self.shared.lock().unwrap();
@@ -513,6 +615,7 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.tray.remove();
         let _ = self.tx.send(Command::Stop);
     }
 }

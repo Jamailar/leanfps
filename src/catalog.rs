@@ -215,6 +215,16 @@ impl Tweak {
         self.genres.is_empty() || genre.is_some_and(|g| self.genres.contains(&g))
     }
 
+    /// Suits this PC (desktop/laptop, Windows build).
+    pub fn fits(&self, m: &crate::platform::Machine) -> bool {
+        let form_ok = match self.form {
+            Form::Any => true,
+            Form::Desktop => !m.laptop,
+            Form::Laptop => m.laptop,
+        };
+        form_ok && (self.min_build == 0 || m.os_build == 0 || m.os_build >= self.min_build)
+    }
+
     pub fn in_preset(&self, preset: &str) -> bool {
         self.presets.iter().any(|p| p == preset)
     }

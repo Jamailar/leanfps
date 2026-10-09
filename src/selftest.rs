@@ -163,11 +163,19 @@ pub fn run() -> i32 {
                 }
             }
         }
+        let full_us = t.elapsed().as_micros() / n as u128;
+        // The watcher judges a process once (cached 10 s); the per-tick cost is reading the
+        // foreground window.
+        let t = Instant::now();
+        for _ in 0..n {
+            let _ = pf.foreground();
+        }
         let tick_us = t.elapsed().as_micros() / n as u128;
+        out!(log, "first look at a new foreground app (worst case, includes module scan): {full_us} us");
         let (cpu1, mem) = pf.self_usage();
-        out!(log, "detection tick: {tick_us} us average over {n} ticks (CPU {} ms total)", cpu1.saturating_sub(cpu0));
+        out!(log, "steady watcher tick (every 2 s): {tick_us} us; CPU used by this whole test: {} ms", cpu1.saturating_sub(cpu0));
         out!(log, "working set: {mem} MB");
-        if tick_us > 2000 {
+        if tick_us > 2000 || full_us > 20_000 {
             failures += 1;
             out!(log, "FAIL detection tick over budget");
         }

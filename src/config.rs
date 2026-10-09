@@ -24,6 +24,9 @@ pub struct Config {
     pub license: Option<String>,
     pub first_run_done: bool,
     pub always_on_top: bool,
+    /// Closing the window keeps LeanFPS running in the tray.
+    pub close_to_tray: bool,
+    pub start_with_windows: bool,
 }
 
 impl Default for Config {
@@ -38,6 +41,8 @@ impl Default for Config {
             license: None,
             first_run_done: false,
             always_on_top: false,
+            close_to_tray: true,
+            start_with_windows: false,
         }
     }
 }

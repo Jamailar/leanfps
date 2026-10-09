@@ -10,6 +10,7 @@ mod platform;
 mod selftest;
 mod session;
 mod store;
+mod tray;
 mod ui;
 mod watcher;
 
@@ -18,6 +19,7 @@ use std::sync::{mpsc, Arc, Mutex};
 const HELP: &str = "LeanFPS - game performance optimizer
 
   leanfps              open the window
+  leanfps --tray       start hidden in the tray (used by Start with Windows)
   leanfps --restore-all  undo every change LeanFPS made, then exit
   leanfps --selftest     apply, verify and undo every tweak (test machines only)
   leanfps --version";
@@ -28,7 +30,8 @@ fn main() {
         attach_console();
     }
     match args.first().map(String::as_str) {
-        None => run_window(),
+        None => run_window(false),
+        Some("--tray") => run_window(true),
         Some("--selftest") => std::process::exit(selftest::run()),
         Some("--restore-all") => std::process::exit(restore_all()),
         Some("--version") => println!("LeanFPS {}", env!("CARGO_PKG_VERSION")),
@@ -41,6 +44,8 @@ fn restore_all() -> i32 {
     let store = store::Store::default_location();
     let session_errs = session::recover(&*pf, &store);
     let mut engine = engine::Engine::new(catalog::Catalog::builtin(), pf, store.clone());
+    #[cfg(windows)]
+    let _ = platform::win::set_autostart(false);
     let mut errs = engine.revert_all();
     errs.extend(pergame::PerGame::load(&store).revert_all(&*engine.pf).into_iter().map(|e| ("per-game".to_string(), e)));
     let mut cfg: config::Config = store.load("config.json").unwrap_or_default();
@@ -60,10 +65,12 @@ fn restore_all() -> i32 {
     }
 }
 
-fn run_window() {
+fn run_window(hidden: bool) {
     #[cfg(windows)]
     if !platform::win::single_instance() {
-        platform::win::focus_existing_window();
+        if !tray::wake_existing() {
+            platform::win::focus_existing_window();
+        }
         return;
     }
     let pf: Arc<dyn platform::Platform> = Arc::from(platform::native());
@@ -85,6 +92,9 @@ fn run_window() {
         .with_min_inner_size([360.0, 480.0])
         .with_maximize_button(false)
         .with_icon(eframe::egui::IconData { rgba: include_bytes!("../res/window-64.rgba").to_vec(), width: 64, height: 64 });
+    if hidden {
+        viewport = viewport.with_visible(false);
+    }
     if always_on_top {
         viewport = viewport.with_window_level(eframe::egui::WindowLevel::AlwaysOnTop);
     }

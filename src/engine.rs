@@ -260,13 +260,12 @@ impl Engine {
 
     pub fn unavailable_reason(&self, t: &Tweak) -> Option<String> {
         let m = self.pf.machine();
-        match t.form {
-            Form::Desktop if m.laptop => return Some("Desktop PCs only".into()),
-            Form::Laptop if !m.laptop => return Some("Laptops only".into()),
-            _ => {}
-        }
-        if t.min_build > 0 && m.os_build > 0 && m.os_build < t.min_build {
-            return Some("Needs a newer Windows version".into());
+        if !t.fits(&m) {
+            return Some(match t.form {
+                Form::Desktop if m.laptop => "Desktop PCs only".into(),
+                Form::Laptop if !m.laptop => "Laptops only".into(),
+                _ => "Needs a newer Windows version".into(),
+            });
         }
         for a in &t.actions {
             if let Action::PowerScheme { scheme } = a {
@@ -283,6 +282,9 @@ impl Engine {
             return TweakState::Unavailable("unknown".into());
         };
         if t.scope == Scope::Session {
+            if let Some(r) = self.unavailable_reason(t) {
+                return TweakState::Unavailable(r);
+            }
             return TweakState::Session;
         }
         let ours = self.journal.has(id);
