@@ -1,8 +1,8 @@
 name: genre-db
 
 # Rebuilds data/steam_genres.tsv from SteamSpy tag votes. Slow (SteamSpy allows 1 request per
-# second), so it only runs when asked or when the tools change. Download the artifact and
-# commit it.
+# second), so it only runs when asked or when the tools change. The result is committed to the
+# branch the run started from (and kept as an artifact).
 on:
   workflow_dispatch:
     inputs:
@@ -11,8 +11,12 @@ on:
         default: "4"
   push:
     paths:
+      - .github/workflows/genre-db.yml
       - tools/fetch_steamspy.py
       - tools/build_genre_db.py
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -34,3 +38,13 @@ jobs:
             data/steam_genres.tsv
             details.jsonl
           retention-days: 30
+      - name: Commit the table to this branch
+        if: github.ref != 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/steam_genres.tsv
+          if git diff --cached --quiet; then echo "no change"; exit 0; fi
+          git commit -m "Steam genre table from SteamSpy tag votes ($(grep -vc '^#' data/steam_genres.tsv) games)"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
