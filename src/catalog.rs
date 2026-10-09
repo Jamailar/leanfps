@@ -151,6 +151,32 @@ pub enum Action {
     BackgroundPriority { class: Priority, processes: Vec<String> },
     /// Purge the standby memory list when free memory drops below a threshold.
     StandbyPurge { below_free_mb: u64 },
+    /// Windows power mode overlay ("Best performance") while the game runs.
+    PowerOverlay { overlay: String },
+    /// Per-game graphics preference (2 = high performance GPU). Kept after the game exits,
+    /// because Windows reads it when the game starts; undone with Restore all.
+    GpuPreference { value: u32 },
+}
+
+impl Action {
+    /// Needs a running game.
+    pub fn is_session_only(&self) -> bool {
+        matches!(
+            self,
+            Action::GamePriority { .. }
+                | Action::GamePowerThrottlingOff
+                | Action::KeepAwake
+                | Action::BackgroundPriority { .. }
+                | Action::StandbyPurge { .. }
+                | Action::PowerOverlay { .. }
+                | Action::GpuPreference { .. }
+        )
+    }
+
+    /// Stays in place per game after the session ends.
+    pub fn is_sticky(&self) -> bool {
+        matches!(self, Action::GpuPreference { .. })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -238,15 +264,7 @@ impl Catalog {
                 return Err(format!("persistent tweak {} cannot be genre-specific", t.id));
             }
             for a in &t.actions {
-                let session_only = matches!(
-                    a,
-                    Action::GamePriority { .. }
-                        | Action::GamePowerThrottlingOff
-                        | Action::KeepAwake
-                        | Action::BackgroundPriority { .. }
-                        | Action::StandbyPurge { .. }
-                );
-                if session_only && t.scope != Scope::Session {
+                if a.is_session_only() && t.scope != Scope::Session {
                     return Err(format!("tweak {}: action {a:?} needs session scope", t.id));
                 }
                 if let Action::Registry { key, .. } = a {

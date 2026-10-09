@@ -154,6 +154,32 @@ actions = [{ type = "background_priority", class = "below_normal", processes = [
 ] }]
 
 [[tweak]]
+id = "power_mode_best"
+title = "Best performance power mode"
+summary = "Laptops: switches Windows to its Best performance power mode while you play."
+detail = "Sets the Windows power mode (Settings > System > Power) to Best performance while the game runs and puts your previous mode back when it exits."
+scope = "session"
+risk = "low"
+pro = true
+form = "laptop"
+presets = ["recommended", "competitive", "laptop"]
+sources = ["https://learn.microsoft.com/en-us/answers/questions/3919778/changing-overlay-power-mode-with-script"]
+actions = [{ type = "power_overlay", overlay = "ded574b5-45a0-4f42-8737-46345c09c238" }]
+
+[[tweak]]
+id = "laptop_fast_gpu"
+title = "Use the fast GPU for games"
+summary = "Laptops with two GPUs: games run on the dedicated GPU instead of the integrated one."
+detail = "Sets the game's Windows graphics preference to High performance (HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences, GpuPreference=2), the same setting as Settings > Display > Graphics. Windows reads it when the game starts, so it stays after the game exits; Restore all removes it. Other values in that setting (such as Auto HDR) are kept."
+scope = "session"
+risk = "medium"
+pro = true
+form = "laptop"
+presets = ["recommended", "laptop"]
+sources = ["https://www.ninjaone.com/blog/restore-gpu-preferences-for-apps-in-windows/"]
+actions = [{ type = "gpu_preference", value = 2 }]
+
+[[tweak]]
 id = "game_priority_high"
 title = "High priority for every game"
 summary = "Stronger than above-normal. Can make other apps feel slow while you play."

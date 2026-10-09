@@ -37,6 +37,7 @@ pub struct App {
     config: Arc<Mutex<Config>>,
     shared: Arc<Mutex<Shared>>,
     store: Store,
+    per_game: Arc<Mutex<crate::pergame::PerGame>>,
     tx: Sender<Command>,
     icons: HashMap<String, TextureHandle>,
     expanded: HashSet<String>,
@@ -52,10 +53,11 @@ impl App {
         config: Arc<Mutex<Config>>,
         shared: Arc<Mutex<Shared>>,
         store: Store,
+        per_game: Arc<Mutex<crate::pergame::PerGame>>,
         tx: Sender<Command>,
     ) -> App {
         style(&cc.egui_ctx);
-        App { engine, db, config, shared, store, tx, icons: HashMap::new(), expanded: HashSet::new(), toast: None, seen_version: 0 }
+        App { engine, db, config, shared, store, per_game, tx, icons: HashMap::new(), expanded: HashSet::new(), toast: None, seen_version: 0 }
     }
 
     fn catalog(&self) -> &Catalog {
@@ -114,6 +116,12 @@ impl App {
         if t.scope == Scope::Persistent {
             self.sync();
         } else {
+            if !on {
+                let errs = self.per_game.lock().unwrap().revert_tweak(&*self.engine.pf, &t.id);
+                if let Some(e) = errs.first() {
+                    self.notify(format!("Could not undo: {e}"), false);
+                }
+            }
             let _ = self.tx.send(Command::Restart);
         }
     }
@@ -121,7 +129,8 @@ impl App {
     fn restore_all(&mut self) {
         self.config.lock().unwrap().set_preset("none");
         self.save_config();
-        let errs = self.engine.revert_all();
+        let mut errs = self.engine.revert_all();
+        errs.extend(self.per_game.lock().unwrap().revert_all(&*self.engine.pf).into_iter().map(|e| ("per-game".to_string(), e)));
         let _ = self.tx.send(Command::Restart);
         match errs.first() {
             None => self.notify("Every change was undone. Your PC is back to how it was.", true),
@@ -559,8 +568,13 @@ fn applied_line(ui: &mut Ui, a: &crate::session::Applied, strong: bool) {
         let r = ui.label(t);
         if let Err(e) = &a.result {
             r.on_hover_text(format!("Skipped: {e}"));
+        } else if let Some(n) = &a.note {
+            r.on_hover_text(n);
         }
     });
+    if let Some(n) = &a.note {
+        ui.label(RichText::new(format!("    {n}")).small().color(color::MUTED));
+    }
 }
 
 fn check_mark(ui: &mut Ui, c: Color32) {

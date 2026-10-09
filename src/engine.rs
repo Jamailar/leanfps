@@ -19,7 +19,55 @@ pub enum Prior {
     PriorityMany { items: Vec<(u32, Priority)> },
     Throttling { pid: u32 },
     KeepAwake,
+    Overlay { overlay: String },
     Nothing,
+}
+
+/// The running game an action applies to.
+#[derive(Debug, Clone, Copy)]
+pub struct GameCtx<'a> {
+    pub pid: u32,
+    pub exe_path: &'a str,
+}
+
+pub const GPU_PREFS_KEY: &str = "HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences";
+
+/// Set `key=value;` inside a `a=1;b=2;` style string, keeping the other fields.
+pub fn merge_kv(existing: &str, key: &str, value: &str) -> String {
+    let mut out = String::new();
+    let mut done = false;
+    for part in existing.split(';').map(str::trim).filter(|p| !p.is_empty()) {
+        let k = part.split('=').next().unwrap_or("");
+        if k.eq_ignore_ascii_case(key) {
+            if !done {
+                out.push_str(&format!("{key}={value};"));
+                done = true;
+            }
+        } else {
+            out.push_str(part);
+            out.push(';');
+        }
+    }
+    if !done {
+        out.push_str(&format!("{key}={value};"));
+    }
+    out
+}
+
+/// IFEO launch-priority key for an exe: Windows applies `CpuPriorityClass` when it starts.
+pub fn ifeo_key(exe_file: &str) -> String {
+    format!("HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\{exe_file}\\PerfOptions")
+}
+
+/// `CpuPriorityClass` values: High = 3, Above normal = 6, Normal = 2, Below normal = 5, Idle = 1.
+pub fn ifeo_priority(p: Priority) -> u32 {
+    match p {
+        Priority::Idle => 1,
+        Priority::Normal => 2,
+        Priority::High => 3,
+        Priority::BelowNormal => 5,
+        Priority::AboveNormal => 6,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -42,9 +90,10 @@ impl Journal {
 const MOUSE_ACCEL_ON: [i32; 3] = [6, 10, 1];
 const MOUSE_ACCEL_OFF: [i32; 3] = [0, 0, 0];
 
-/// Run one action and return what it replaced. `game_pid` is required for session actions.
-pub fn apply_action(pf: &dyn Platform, action: &Action, game_pid: Option<u32>) -> PResult<Prior> {
-    let need_pid = || game_pid.ok_or_else(|| "this change only works while a game is running".to_string());
+/// Run one action and return what it replaced. `game` is required for session actions.
+pub fn apply_action(pf: &dyn Platform, action: &Action, game: Option<GameCtx>) -> PResult<Prior> {
+    let need_game = || game.ok_or_else(|| "this change only works while a game is running".to_string());
+    let need_pid = || need_game().map(|g| g.pid);
     match action {
         Action::Registry { key, name, value } => {
             let before = pf.reg_get(key, name)?;
@@ -105,6 +154,22 @@ pub fn apply_action(pf: &dyn Platform, action: &Action, game_pid: Option<u32>) -
             Ok(Prior::PriorityMany { items })
         }
         Action::StandbyPurge { .. } => Ok(Prior::Nothing),
+        Action::PowerOverlay { overlay } => {
+            need_game()?;
+            let before = pf.power_overlay()?;
+            pf.set_power_overlay(overlay)?;
+            Ok(Prior::Overlay { overlay: before })
+        }
+        Action::GpuPreference { value } => {
+            let g = need_game()?;
+            let before = pf.reg_get(GPU_PREFS_KEY, g.exe_path)?;
+            let current = match &before {
+                Some(RegData::Sz(s)) => s.clone(),
+                _ => String::new(),
+            };
+            pf.reg_set(GPU_PREFS_KEY, g.exe_path, &RegData::Sz(merge_kv(&current, "GpuPreference", &value.to_string())))?;
+            Ok(Prior::Registry { key: GPU_PREFS_KEY.into(), name: g.exe_path.into(), value: before })
+        }
     }
 }
 
@@ -142,6 +207,7 @@ pub fn revert_prior(pf: &dyn Platform, prior: &Prior) -> PResult<()> {
             Ok(())
         }
         Prior::KeepAwake => pf.set_keep_awake(false),
+        Prior::Overlay { overlay } => pf.set_power_overlay(overlay),
         Prior::Nothing => Ok(()),
     }
 }
@@ -367,6 +433,13 @@ mod tests {
         e.apply("game_dvr_off").unwrap();
         e.revert("game_dvr_off").unwrap();
         pf.with(|s| assert!(s.reg.keys().all(|(_, n)| n != "GameDVR_Enabled" && n != "AppCaptureEnabled")));
+    }
+
+    #[test]
+    fn merge_kv_keeps_other_fields() {
+        assert_eq!(merge_kv("", "GpuPreference", "2"), "GpuPreference=2;");
+        assert_eq!(merge_kv("AutoHDREnable=0;GpuPreference=1;", "GpuPreference", "2"), "AutoHDREnable=0;GpuPreference=2;");
+        assert_eq!(merge_kv("SwapEffectUpgradeEnable=1", "GpuPreference", "2"), "SwapEffectUpgradeEnable=1;GpuPreference=2;");
     }
 
     #[test]

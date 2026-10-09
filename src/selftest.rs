@@ -95,7 +95,8 @@ pub fn run() -> i32 {
                 let prio_before = pf.priority(pid);
                 let mouse_before = pf.mouse_params();
                 let game = GameInfo { name: "Stand-in".into(), genre: Some(genre), exe_path: "cmd.exe".into(), source: Source::Known };
-                let s = Session::start(&*pf, &catalog, &cfg, &store, game, pid);
+                let mut per_game = crate::pergame::PerGame::load(&store);
+                let s = Session::start(&*pf, &catalog, &cfg, &store, &mut per_game, game, pid);
                 for a in &s.applied {
                     match &a.result {
                         Ok(()) => out!(log, "OK   {:?} {}", genre, a.tweak),
@@ -109,7 +110,8 @@ pub fn run() -> i32 {
                     failures += 1;
                     out!(log, "FAIL priority not High during session: {:?}", pf.priority(pid));
                 }
-                let errs = s.end(&*pf, &store);
+                let mut errs = s.end(&*pf, &store);
+                errs.extend(per_game.revert_all(&*pf));
                 if !errs.is_empty() || pf.priority(pid) != prio_before || pf.mouse_params() != mouse_before {
                     failures += 1;
                     out!(log, "FAIL {genre:?} not restored: errs={errs:?} prio={:?}/{prio_before:?} mouse={:?}/{mouse_before:?}", pf.priority(pid), pf.mouse_params());

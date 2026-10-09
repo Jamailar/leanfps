@@ -51,6 +51,7 @@ pub struct Watcher {
     pub config: Arc<Mutex<Config>>,
     pub shared: Arc<Mutex<Shared>>,
     pub store: Store,
+    pub per_game: Arc<Mutex<crate::pergame::PerGame>>,
     pub on_change: Box<dyn Fn() + Send>,
 }
 
@@ -152,7 +153,7 @@ impl Watcher {
             self.update(|sh| sh.candidate = None);
         }
         let cfg_snapshot = self.config.lock().unwrap().clone();
-        let s = Session::start(&*self.pf, &self.catalog, &cfg_snapshot, &self.store, game.clone(), fg.pid);
+        let s = Session::start(&*self.pf, &self.catalog, &cfg_snapshot, &self.store, &mut self.per_game.lock().unwrap(), game.clone(), fg.pid);
         if trial && *counted != Some(fg.pid) {
             *counted = Some(fg.pid);
             let mut cfg = self.config.lock().unwrap();

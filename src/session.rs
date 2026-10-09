@@ -4,7 +4,9 @@
 
 use crate::catalog::{Action, Catalog, Scope};
 use crate::config::Config;
-use crate::engine::{apply_action, revert_prior, Entry};
+use crate::engine::{apply_action, revert_prior, Entry, GameCtx};
+use crate::pergame::PerGame;
+use crate::catalog::Priority;
 use crate::games::GameInfo;
 use crate::platform::Platform;
 use crate::store::Store;
@@ -19,6 +21,8 @@ pub struct Applied {
     pub title: String,
     pub genre_specific: bool,
     pub result: Result<(), String>,
+    /// Extra context, e.g. "applies from the next launch".
+    pub note: Option<String>,
 }
 
 pub struct Session {
@@ -33,7 +37,7 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn start(pf: &dyn Platform, catalog: &Catalog, cfg: &Config, store: &Store, game: GameInfo, pid: u32) -> Session {
+    pub fn start(pf: &dyn Platform, catalog: &Catalog, cfg: &Config, store: &Store, per_game: &mut PerGame, game: GameInfo, pid: u32) -> Session {
         let mut s = Session {
             game,
             pid,
@@ -49,14 +53,46 @@ impl Session {
                 continue;
             }
             let mut result = Ok(());
+            let mut note = None;
+            let exe = s.game.exe_path.clone();
+            let ctx = GameCtx { pid, exe_path: &exe };
             for a in &t.actions {
                 if let Action::StandbyPurge { below_free_mb } = a {
                     s.purge_below_mb = Some(*below_free_mb);
                 }
-                match apply_action(pf, a, Some(pid)) {
+                if a.is_sticky() {
+                    if per_game.has(&t.id, &exe) {
+                        continue;
+                    }
+                    match apply_action(pf, a, Some(ctx)) {
+                        Ok(prior) => {
+                            per_game.record(&t.id, &exe, prior);
+                            note = Some("Takes effect the next time the game starts".to_string());
+                        }
+                        Err(e) => {
+                            result = Err(e);
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                match apply_action(pf, a, Some(ctx)) {
                     Ok(prior) => {
                         s.priors.push(Entry { tweak: t.id.clone(), prior });
                         let _ = store.save(SESSION_FILE, &s.priors);
+                    }
+                    // Anti-cheat protected games refuse priority changes while running; Windows
+                    // can still apply a launch priority to them.
+                    Err(e) if matches!(a, Action::GamePriority { class } if *class >= Priority::AboveNormal) => {
+                        let Action::GamePriority { class } = a else { unreachable!() };
+                        match per_game.launch_priority(pf, &t.id, &exe, *class) {
+                            Ok(true) => note = Some("Protected game: set for its next launch".to_string()),
+                            Ok(false) => note = Some("Protected game: Windows sets this at launch".to_string()),
+                            Err(_) => {
+                                result = Err(e);
+                                break;
+                            }
+                        }
                     }
                     Err(e) => {
                         result = Err(e);
@@ -64,7 +100,7 @@ impl Session {
                     }
                 }
             }
-            s.applied.push(Applied { tweak: t.id.clone(), title: t.title.clone(), genre_specific: t.is_genre_specific(), result });
+            s.applied.push(Applied { tweak: t.id.clone(), title: t.title.clone(), genre_specific: t.is_genre_specific(), result, note });
         }
         s
     }
@@ -111,7 +147,7 @@ mod tests {
     use crate::catalog::{Genre, Priority};
     use crate::games::Source;
     use crate::platform::mock::MockPlatform;
-    use crate::platform::ProcInfo;
+    use crate::platform::{Platform, ProcInfo};
 
     fn setup() -> (MockPlatform, Catalog, Config, Store) {
         let pf = MockPlatform::new();
@@ -132,7 +168,7 @@ mod tests {
     #[test]
     fn shooter_session_applies_and_reverts() {
         let (pf, cat, cfg, store) = setup();
-        let s = Session::start(&pf, &cat, &cfg, &store, game(Some(Genre::Shooter)), 2);
+        let s = Session::start(&pf, &cat, &cfg, &store, &mut PerGame::load(&store), game(Some(Genre::Shooter)), 2);
         assert!(s.applied.iter().all(|a| a.result.is_ok()), "{:?}", s.applied);
         assert!(s.applied.iter().any(|a| a.tweak == "shooter_mouse_accel_off" && a.genre_specific));
         assert!(!s.applied.iter().any(|a| a.tweak == "standby_purge"), "open-world tweak not for shooters");
@@ -157,7 +193,7 @@ mod tests {
     #[test]
     fn crash_recovery_reverts_left_over_session() {
         let (pf, cat, cfg, store) = setup();
-        let s = Session::start(&pf, &cat, &cfg, &store, game(Some(Genre::Shooter)), 2);
+        let s = Session::start(&pf, &cat, &cfg, &store, &mut PerGame::load(&store), game(Some(Genre::Shooter)), 2);
         std::mem::forget(s); // simulate a crash: end() never runs
         assert_eq!(pf.with(|st| st.mouse), [0, 0, 0]);
         assert!(recover(&pf, &store).is_empty());
@@ -172,27 +208,55 @@ mod tests {
     fn free_tier_only_runs_free_session_tweaks() {
         let (pf, cat, mut cfg, store) = setup();
         cfg.sessions_played = 10;
-        let s = Session::start(&pf, &cat, &cfg, &store, game(Some(Genre::Shooter)), 2);
+        let s = Session::start(&pf, &cat, &cfg, &store, &mut PerGame::load(&store), game(Some(Genre::Shooter)), 2);
         let ids: Vec<_> = s.applied.iter().map(|a| a.tweak.as_str()).collect();
         assert_eq!(ids, vec!["keep_awake"]);
         s.end(&pf, &store);
     }
 
     #[test]
-    fn protected_game_failure_is_reported_not_fatal() {
+    fn protected_game_gets_launch_priority_instead() {
         let (pf, cat, cfg, store) = setup();
         pf.with(|st| st.fail.push("set_priority:2".into()));
-        let s = Session::start(&pf, &cat, &cfg, &store, game(Some(Genre::Shooter)), 2);
+        let mut pg = PerGame::load(&store);
+        let s = Session::start(&pf, &cat, &cfg, &store, &mut pg, game(Some(Genre::Shooter)), 2);
         let prio = s.applied.iter().find(|a| a.tweak == "competitive_priority_high").unwrap();
-        assert!(prio.result.is_err());
+        assert!(prio.result.is_ok() && prio.note.is_some(), "{prio:?}");
+        let key = crate::engine::ifeo_key("cs2.exe");
+        assert_eq!(pf.reg_get(&key, "CpuPriorityClass").unwrap(), Some(crate::catalog::RegData::Dword(3)));
         assert!(s.applied.iter().any(|a| a.tweak == "keep_awake" && a.result.is_ok()));
         assert!(s.end(&pf, &store).is_empty());
+        // Launch priority stays after the session; Restore all removes it.
+        assert!(pf.reg_get(&key, "CpuPriorityClass").unwrap().is_some());
+        assert!(PerGame::load(&store).revert_all(&pf).is_empty());
+        assert_eq!(pf.reg_get(&key, "CpuPriorityClass").unwrap(), None);
+    }
+
+    #[test]
+    fn laptop_session_sets_power_mode_and_gpu_preference() {
+        let (pf, cat, cfg, store) = setup();
+        pf.with(|st| st.machine.laptop = true);
+        let mut pg = PerGame::load(&store);
+        let g = GameInfo { name: "X".into(), genre: Some(Genre::OpenWorld), exe_path: r"C:\\Games\\x.exe".into(), source: Source::Known };
+        let s = Session::start(&pf, &cat, &cfg, &store, &mut pg, g.clone(), 2);
+        assert!(s.applied.iter().all(|a| a.result.is_ok()), "{:?}", s.applied);
+        assert_eq!(pf.power_overlay().unwrap(), "ded574b5-45a0-4f42-8737-46345c09c238");
+        let pref = pf.reg_get(crate::engine::GPU_PREFS_KEY, r"C:\\Games\\x.exe").unwrap();
+        assert_eq!(pref, Some(crate::catalog::RegData::Sz("GpuPreference=2;".into())));
+        s.end(&pf, &store);
+        assert_eq!(pf.power_overlay().unwrap(), "00000000-0000-0000-0000-000000000000", "power mode restored");
+        // Second session: GPU preference already in place, not recorded twice.
+        let s = Session::start(&pf, &cat, &cfg, &store, &mut pg, g, 2);
+        s.end(&pf, &store);
+        assert_eq!(pg.entries.len(), 1);
+        assert!(pg.revert_all(&pf).is_empty());
+        assert_eq!(pf.reg_get(crate::engine::GPU_PREFS_KEY, r"C:\\Games\\x.exe").unwrap(), None);
     }
 
     #[test]
     fn open_world_purges_standby_when_memory_low() {
         let (pf, cat, cfg, store) = setup();
-        let mut s = Session::start(&pf, &cat, &cfg, &store, game(Some(Genre::OpenWorld)), 2);
+        let mut s = Session::start(&pf, &cat, &cfg, &store, &mut PerGame::load(&store), game(Some(Genre::OpenWorld)), 2);
         s.tick(&pf);
         assert_eq!(s.purges, 0);
         pf.with(|st| st.free_mb = 500);

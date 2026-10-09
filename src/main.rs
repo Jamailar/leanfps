@@ -5,6 +5,7 @@ mod config;
 mod engine;
 mod games;
 mod license;
+mod pergame;
 mod platform;
 mod selftest;
 mod session;
@@ -40,7 +41,8 @@ fn restore_all() -> i32 {
     let store = store::Store::default_location();
     let session_errs = session::recover(&*pf, &store);
     let mut engine = engine::Engine::new(catalog::Catalog::builtin(), pf, store.clone());
-    let errs = engine.revert_all();
+    let mut errs = engine.revert_all();
+    errs.extend(pergame::PerGame::load(&store).revert_all(&*engine.pf).into_iter().map(|e| ("per-game".to_string(), e)));
     let mut cfg: config::Config = store.load("config.json").unwrap_or_default();
     cfg.set_preset("none");
     let _ = store.save("config.json", &cfg);
@@ -70,6 +72,7 @@ fn run_window() {
     let config = Arc::new(Mutex::new(store.load::<config::Config>("config.json").unwrap_or_default()));
     let shared = Arc::new(Mutex::new(watcher::Shared::default()));
     let engine = engine::Engine::new(catalog.clone(), pf.clone(), store.clone());
+    let per_game = Arc::new(Mutex::new(pergame::PerGame::load(&store)));
     let (tx, rx) = mpsc::channel();
     let always_on_top = config.lock().unwrap().always_on_top;
     // The watcher must finish undoing session changes before the process exits.
@@ -100,6 +103,7 @@ fn run_window() {
                 config: config.clone(),
                 shared: shared.clone(),
                 store: store.clone(),
+                per_game: per_game.clone(),
                 on_change: Box::new(move || ctx.request_repaint()),
             };
             {
@@ -116,7 +120,7 @@ fn run_window() {
             }
             let h = std::thread::Builder::new().name("watcher".into()).spawn(move || w.run(rx)).expect("start watcher");
             *watcher_slot.lock().unwrap() = Some(h);
-            Ok(Box::new(ui::App::new(cc, engine, games::GameDb::builtin(), config, shared, store, tx)))
+            Ok(Box::new(ui::App::new(cc, engine, games::GameDb::builtin(), config, shared, store, per_game, tx)))
         }),
     );
     if let Err(e) = result {
