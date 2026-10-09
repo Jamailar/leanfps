@@ -1,0 +1,51 @@
+name: leanfps
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+
+      - name: Unit tests
+        run: cargo test --locked
+
+      - name: Release build
+        run: cargo build --release --locked
+
+      - name: Size budget (fail above 8 MB, product limit is 20 MB)
+        shell: pwsh
+        run: |
+          $size = (Get-Item target/release/leanfps.exe).Length
+          "leanfps.exe: {0:N2} MB" -f ($size / 1MB)
+          if ($size -gt 8MB) { throw "leanfps.exe is over the 8 MB budget" }
+
+      # The runner VM is thrown away afterwards and runs as administrator, so the real
+      # tweaks can be applied, verified and reverted here.
+      - name: Self-test on a real Windows system
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath target/release/leanfps.exe -ArgumentList "--selftest" -Wait -PassThru -NoNewWindow
+          Get-Content leanfps-selftest.log
+          if ($p.ExitCode -ne 0) { throw "selftest failed with exit code $($p.ExitCode)" }
+
+      - name: Restore-all leaves nothing behind
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath target/release/leanfps.exe -ArgumentList "--restore-all" -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "restore-all failed" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leanfps-windows-unsigned
+          path: target/release/leanfps.exe
+          retention-days: 14

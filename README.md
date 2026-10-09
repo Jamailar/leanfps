@@ -3,12 +3,11 @@
 Tiny game performance optimizer for Windows 10/11, written in Rust. One ~6 MB executable,
 no installer, no .NET, no WebView.
 
-Plan and decisions: `docs/plans/2026-10-09-leanfps-plan.md` (Chinese). Competitor teardown:
-`docs/plans/2026-10-09-game-optimizer-research.md`.
+Plan and decisions: `docs/plan.md` (Chinese). Competitor teardown:
+`docs/research-radiant-optimizer.md`.
 
-> This folder lives in the Sites repo temporarily. It moves to its own private repo
-> (`Jamailar/leanfps`) with full history once that repo exists:
-> `git subtree split --prefix apps/leanfps -b leanfps-split` and push that branch.
+History before 2026-10-09 was imported from `Jamailar/Sites` (`apps/leanfps`). The website
+will live in `Jamailar/Sites` under `sites/leanfps/`.
 
 ## What it does
 
@@ -60,7 +59,7 @@ leanfps --selftest      apply, verify and undo every tweak; writes leanfps-selft
 ```
 
 `--selftest` changes real system settings. Run it only on a throwaway machine; CI runs it on
-the GitHub Windows runner (`.github/workflows/leanfps.yml`), which also enforces an 8 MB
+the GitHub Windows runner (`.github/workflows/ci.yml`), which also enforces an 8 MB
 size budget.
 
 ## Game database
