@@ -291,6 +291,40 @@ mod tests {
     }
 
     #[test]
+    fn x3d_game_runs_on_the_vcache_die_and_is_released() {
+        let (pf, cat, cfg, store) = setup();
+        let sets: Vec<crate::platform::CpuSet> = (0..32)
+            .map(|i| crate::platform::CpuSet { id: 256 + i, llc: (i / 16) as u8, l3_kb: if i < 16 { 98304 } else { 32768 }, efficiency: 0 })
+            .collect();
+        pf.with(|st| st.cpu_sets = sets);
+        let s = Session::start(&pf, &cat, &cfg, &store, &mut PerGame::load(&store), game(Some(Genre::OpenWorld)), 2);
+        let a = s.applied.iter().find(|a| a.tweak == "game_on_vcache").expect("applies on X3D");
+        assert!(a.result.is_ok(), "{a:?}");
+        assert!(!s.applied.iter().any(|a| a.tweak == "game_on_pcores"), "not hybrid, and off by default");
+        assert_eq!(pf.with(|st| st.proc_cpu_sets.get(&2).cloned()), Some((256..272).collect()));
+        // A crash is repaired like everything else.
+        std::mem::forget(s);
+        assert!(recover(&pf, &store).is_empty());
+        assert_eq!(pf.with(|st| st.proc_cpu_sets.get(&2).cloned()), Some(vec![]));
+
+        // The user already pinned the game: left alone.
+        pf.with(|st| st.proc_cpu_sets.insert(2, vec![270, 271, 272, 273]));
+        let s = Session::start(&pf, &cat, &cfg, &store, &mut PerGame::load(&store), game(Some(Genre::OpenWorld)), 2);
+        assert_eq!(pf.with(|st| st.proc_cpu_sets.get(&2).cloned()), Some(vec![270, 271, 272, 273]));
+        assert!(s.end(&pf, &store).is_empty());
+        assert_eq!(pf.with(|st| st.proc_cpu_sets.get(&2).cloned()), Some(vec![270, 271, 272, 273]));
+    }
+
+    #[test]
+    fn cpu_tweaks_skip_ordinary_cpus() {
+        let (pf, cat, cfg, store) = setup();
+        let s = Session::start(&pf, &cat, &cfg, &store, &mut PerGame::load(&store), game(Some(Genre::Shooter)), 2);
+        assert!(!s.applied.iter().any(|a| a.tweak.starts_with("game_on_")));
+        assert!(pf.with(|st| st.proc_cpu_sets.is_empty()));
+        s.end(&pf, &store);
+    }
+
+    #[test]
     fn open_world_purges_standby_when_memory_low() {
         let (pf, cat, cfg, store) = setup();
         let mut s = Session::start(&pf, &cat, &cfg, &store, &mut PerGame::load(&store), game(Some(Genre::OpenWorld)), 2);

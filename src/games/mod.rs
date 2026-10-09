@@ -117,6 +117,8 @@ const NOT_GAMES: &[&str] = &[
     "rockstarlauncher.exe", "socialclubhelper.exe", "xboxpcapp.exe", "gamingservices.exe",
     "blender.exe", "unity.exe", "unrealeditor.exe", "photoshop.exe", "afterfx.exe", "premiere pro.exe",
     "resolve.exe", "nvidia app.exe", "nvcontainer.exe", "radeonsoftware.exe", "msiafterburner.exe",
+    "hyp.exe", "wegame.exe", "ubisoftconnect.exe", "heroic.exe", "playnite.desktopapp.exe", "playnite.fullscreenapp.exe",
+    "amazon games ui.exe", "ealauncher.exe", "launcher.exe", "rtss.exe", "geforcenow.exe", "parsecd.exe", "moonlight.exe",
 ];
 
 /// Genre for a title from our databases: curated list first, then Steam tags.

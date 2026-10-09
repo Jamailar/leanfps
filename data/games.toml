@@ -55,6 +55,87 @@ tips = [
 
 # ---------------------------------------------------------------- shooters
 [[game]]
+name = "Battlefield 6"
+genre = "shooter"
+exe = ["bf6.exe"]
+
+[[game]]
+name = "Delta Force"
+genre = "shooter"
+exe = ["DeltaForceClient-Win64-Shipping.exe"]
+
+[[game]]
+name = "NARAKA: BLADEPOINT"
+genre = "shooter"
+exe = ["NarakaBladepoint.exe"]
+steam = 1203220
+
+[[game]]
+name = "CrossFire"
+genre = "shooter"
+exe = ["crossfire.exe"]
+
+[[game]]
+name = "Hunt: Showdown 1896"
+genre = "shooter"
+exe = ["HuntGame.exe"]
+steam = 594650
+
+[[game]]
+name = "Ready or Not"
+genre = "shooter"
+exe = ["ReadyOrNot-Win64-Shipping.exe"]
+steam = 1144200
+
+[[game]]
+name = "Squad"
+genre = "shooter"
+exe = ["SquadGame.exe"]
+steam = 393380
+
+[[game]]
+name = "Arma 3"
+genre = "shooter"
+exe = ["arma3_x64.exe"]
+steam = 107410
+
+[[game]]
+name = "Insurgency: Sandstorm"
+genre = "shooter"
+exe = ["InsurgencyClient-Win64-Shipping.exe"]
+steam = 581320
+
+[[game]]
+name = "War Thunder"
+genre = "shooter"
+exe = ["aces.exe"]
+steam = 236390
+
+[[game]]
+name = "World of Tanks"
+genre = "shooter"
+exe = ["WorldOfTanks.exe"]
+
+[[game]]
+name = "Deadlock"
+genre = "shooter"
+exe = ["deadlock.exe"]
+steam = 1422450
+
+[[game]]
+name = "Street Fighter 6"
+genre = "shooter"
+exe = ["StreetFighter6.exe"]
+steam = 1364780
+
+[[game]]
+name = "TEKKEN 8"
+genre = "shooter"
+exe = ["Polaris-Win64-Shipping.exe"]
+steam = 1778820
+path_contains = ["TEKKEN 8"]
+
+[[game]]
 name = "Counter-Strike 2"
 genre = "shooter"
 exe = ["cs2.exe"]
@@ -154,6 +235,11 @@ steam = 230410
 
 # ---------------------------------------------------------------- MOBA
 [[game]]
+name = "Heroes of the Storm"
+genre = "moba"
+exe = ["HeroesOfTheStorm_x64.exe"]
+
+[[game]]
 name = "League of Legends"
 genre = "moba"
 exe = ["League of Legends.exe"]
@@ -165,6 +251,48 @@ exe = ["dota2.exe"]
 steam = 570
 
 # ---------------------------------------------------------------- strategy
+[[game]]
+name = "Stellaris"
+genre = "strategy"
+exe = ["stellaris.exe"]
+steam = 281990
+
+[[game]]
+name = "Europa Universalis IV"
+genre = "strategy"
+exe = ["eu4.exe"]
+steam = 236850
+
+[[game]]
+name = "Crusader Kings III"
+genre = "strategy"
+exe = ["ck3.exe"]
+steam = 1158310
+
+[[game]]
+name = "Age of Empires II: Definitive Edition"
+genre = "strategy"
+exe = ["AoE2DE_s.exe"]
+steam = 813780
+
+[[game]]
+name = "Factorio"
+genre = "strategy"
+exe = ["factorio.exe"]
+steam = 427520
+
+[[game]]
+name = "RimWorld"
+genre = "strategy"
+exe = ["RimWorldWin64.exe"]
+steam = 294100
+
+[[game]]
+name = "Manor Lords"
+genre = "strategy"
+exe = ["ManorLords-Win64-Shipping.exe"]
+steam = 1363080
+
 [[game]]
 name = "Sid Meier's Civilization VI"
 genre = "strategy"
@@ -201,6 +329,109 @@ exe = ["Cities2.exe"]
 steam = 949230
 
 # ---------------------------------------------------------------- open world & RPG
+[[game]]
+name = "Genshin Impact (China)"
+genre = "open_world"
+exe = ["YuanShen.exe"]
+
+[[game]]
+name = "Honkai: Star Rail"
+genre = "open_world"
+exe = ["StarRail.exe"]
+
+[[game]]
+name = "Zenless Zone Zero"
+genre = "open_world"
+exe = ["ZenlessZoneZero.exe"]
+
+[[game]]
+name = "Wuthering Waves"
+genre = "open_world"
+exe = ["Client-Win64-Shipping.exe"]
+path_contains = ["Wuthering Waves"]
+
+[[game]]
+name = "Ghost of Tsushima"
+genre = "open_world"
+exe = ["GhostOfTsushima.exe"]
+steam = 2215430
+
+[[game]]
+name = "Horizon Forbidden West"
+genre = "open_world"
+exe = ["HorizonForbiddenWest.exe"]
+steam = 2420110
+
+[[game]]
+name = "Kingdom Come: Deliverance"
+genre = "open_world"
+exe = ["KingdomCome.exe"]
+
+[[game]]
+name = "ELDEN RING NIGHTREIGN"
+genre = "open_world"
+exe = ["nightreign.exe"]
+steam = 2622380
+
+[[game]]
+name = "Assassin's Creed Shadows"
+genre = "open_world"
+exe = ["ACShadows.exe"]
+
+[[game]]
+name = "Monster Hunter: World"
+genre = "open_world"
+exe = ["MonsterHunterWorld.exe"]
+steam = 582010
+
+[[game]]
+name = "DARK SOULS III"
+genre = "open_world"
+exe = ["DarkSoulsIII.exe"]
+steam = 374320
+
+[[game]]
+name = "Sekiro: Shadows Die Twice"
+genre = "open_world"
+exe = ["sekiro.exe"]
+steam = 814380
+
+[[game]]
+name = "The Elder Scrolls V: Skyrim Special Edition"
+genre = "open_world"
+exe = ["SkyrimSE.exe"]
+steam = 489830
+
+[[game]]
+name = "Fallout 4"
+genre = "open_world"
+exe = ["Fallout4.exe"]
+steam = 377160
+
+[[game]]
+name = "S.T.A.L.K.E.R. 2: Heart of Chornobyl"
+genre = "open_world"
+exe = ["Stalker2-Win64-Shipping.exe"]
+steam = 1643320
+
+[[game]]
+name = "FINAL FANTASY XVI"
+genre = "open_world"
+exe = ["ffxvi.exe"]
+steam = 2515020
+
+[[game]]
+name = "Dragon's Dogma 2"
+genre = "open_world"
+exe = ["DD2.exe"]
+steam = 2054970
+
+[[game]]
+name = "God of War"
+genre = "open_world"
+exe = ["GoW.exe"]
+steam = 1593500
+
 [[game]]
 name = "Grand Theft Auto V"
 genre = "open_world"
@@ -274,6 +505,50 @@ steam = 1172620
 
 # ---------------------------------------------------------------- racing & sports
 [[game]]
+name = "EA SPORTS FC"
+genre = "racing"
+exe = ["FC24.exe", "FC25.exe", "FC26.exe"]
+
+[[game]]
+name = "NBA 2K"
+genre = "racing"
+exe = ["NBA2K24.exe", "NBA2K25.exe", "NBA2K26.exe"]
+
+[[game]]
+name = "F1"
+genre = "racing"
+exe = ["F1_23.exe", "F1_24.exe", "F1_25.exe"]
+
+[[game]]
+name = "Euro Truck Simulator 2"
+genre = "racing"
+exe = ["eurotrucks2.exe"]
+steam = 227300
+
+[[game]]
+name = "American Truck Simulator"
+genre = "racing"
+exe = ["amtrucks.exe"]
+steam = 270880
+
+[[game]]
+name = "Microsoft Flight Simulator"
+genre = "racing"
+exe = ["FlightSimulator.exe", "FlightSimulator2024.exe"]
+
+[[game]]
+name = "BeamNG.drive"
+genre = "racing"
+exe = ["BeamNG.drive.x64.exe"]
+steam = 284160
+
+[[game]]
+name = "Assetto Corsa"
+genre = "racing"
+exe = ["acs.exe"]
+steam = 244210
+
+[[game]]
 name = "Rocket League"
 genre = "racing"
 exe = ["RocketLeague.exe"]
@@ -297,6 +572,42 @@ genre = "racing"
 exe = ["iRacingSim64DX11.exe"]
 
 # ---------------------------------------------------------------- sandbox & survival
+[[game]]
+name = "Satisfactory"
+genre = "sandbox"
+exe = ["FactoryGameSteam-Win64-Shipping.exe", "FactoryGameEGS-Win64-Shipping.exe"]
+steam = 526870
+
+[[game]]
+name = "7 Days to Die"
+genre = "sandbox"
+exe = ["7DaysToDie.exe"]
+steam = 251570
+
+[[game]]
+name = "ARK: Survival Ascended"
+genre = "sandbox"
+exe = ["ArkAscended.exe"]
+steam = 2399830
+
+[[game]]
+name = "Enshrouded"
+genre = "sandbox"
+exe = ["enshrouded.exe"]
+steam = 1203620
+
+[[game]]
+name = "Subnautica"
+genre = "sandbox"
+exe = ["Subnautica.exe"]
+steam = 264710
+
+[[game]]
+name = "DayZ"
+genre = "sandbox"
+exe = ["DayZ_x64.exe"]
+steam = 221100
+
 [[game]]
 name = "Minecraft"
 genre = "sandbox"
@@ -339,6 +650,32 @@ steam = 892970
 
 # ---------------------------------------------------------------- online RPG
 [[game]]
+name = "Guild Wars 2"
+genre = "mmo"
+exe = ["Gw2-64.exe"]
+
+[[game]]
+name = "The Elder Scrolls Online"
+genre = "mmo"
+exe = ["eso64.exe"]
+
+[[game]]
+name = "Black Desert"
+genre = "mmo"
+exe = ["BlackDesert64.exe"]
+
+[[game]]
+name = "Throne and Liberty"
+genre = "mmo"
+exe = ["TL.exe"]
+
+[[game]]
+name = "New World: Aeternum"
+genre = "mmo"
+exe = ["NewWorld.exe"]
+steam = 1063730
+
+[[game]]
 name = "World of Warcraft"
 genre = "mmo"
 exe = ["Wow.exe"]
@@ -369,6 +706,41 @@ steam = 2344520
 
 # ---------------------------------------------------------------- casual & indie
 [[game]]
+name = "Hollow Knight"
+genre = "casual"
+exe = ["hollow_knight.exe"]
+steam = 367520
+
+[[game]]
+name = "Hades II"
+genre = "casual"
+exe = ["Hades2.exe"]
+steam = 1145350
+
+[[game]]
+name = "Balatro"
+genre = "casual"
+exe = ["Balatro.exe"]
+steam = 2379780
+
+[[game]]
+name = "Phasmophobia"
+genre = "casual"
+exe = ["Phasmophobia.exe"]
+steam = 739630
+
+[[game]]
+name = "Don't Starve Together"
+genre = "casual"
+exe = ["dontstarve_steam_x64.exe"]
+steam = 322330
+
+[[game]]
+name = "Identity V"
+genre = "casual"
+exe = ["dwrg.exe"]
+
+[[game]]
 name = "Stardew Valley"
 genre = "casual"
 exe = ["Stardew Valley.exe"]
@@ -392,6 +764,26 @@ genre = "casual"
 exe = ["FallGuys_client_game.exe"]
 
 # ---------------------------------------------------------------- emulators (genre depends on the game)
+[[game]]
+name = "shadPS4 (PS4)"
+exe = ["shadPS4.exe"]
+
+[[game]]
+name = "Vita3K (PS Vita)"
+exe = ["Vita3K.exe"]
+
+[[game]]
+name = "melonDS (DS)"
+exe = ["melonDS.exe"]
+
+[[game]]
+name = "Citra (3DS)"
+exe = ["citra-qt.exe", "azahar.exe"]
+
+[[game]]
+name = "mGBA (Game Boy Advance)"
+exe = ["mGBA.exe"]
+
 [[game]]
 name = "Ryujinx (Switch)"
 exe = ["Ryujinx.exe"]

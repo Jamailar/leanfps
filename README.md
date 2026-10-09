@@ -12,10 +12,11 @@ will live in `Jamailar/Sites` under `sites/leanfps/`.
 ## What it does
 
 - **System tweaks** (persistent): power plan, core parking, Game Mode, background recording,
-  plus advanced opt-ins (HAGS, MPO). The real previous value is saved before every change and
+  Windows 11 optimizations for windowed games, plus advanced opt-ins (HAGS, MPO). The real previous value is saved before every change and
   restored on undo, one tweak at a time or all at once.
 - **While gaming** (session): when a game is in the foreground LeanFPS raises its priority,
-  opts it out of power throttling, keeps the PC awake and lowers background apps. Everything
+  opts it out of power throttling, keeps the PC awake and lowers background apps. On Ryzen
+  X3D CPUs with two dies the game runs on the V-Cache die (Windows CPU sets). Everything
   is undone when the game exits, and after a crash on the next start.
 - **Game profiles**: the game is identified (built-in database, Steam and Epic libraries,
   or fullscreen fallback), its icon is shown, and genre-specific tweaks run (e.g. mouse

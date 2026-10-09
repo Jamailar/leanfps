@@ -413,7 +413,35 @@ impl Platform for WinPlatform {
             Ok(Some(RegData::Sz(s))) => s.trim().to_string(),
             _ => String::new(),
         };
-        Machine { laptop, os_build, cpu }
+        let sets = self.cpu_sets();
+        let split_cache = cpu_target(&sets, CpuPrefer::LargestCache).is_some();
+        let hybrid = cpu_target(&sets, CpuPrefer::PerformanceCores).is_some();
+        Machine { laptop, os_build, cpu, split_cache, hybrid }
+    }
+
+    fn cpu_sets(&self) -> Vec<CpuSet> {
+        static SETS: std::sync::OnceLock<Vec<CpuSet>> = std::sync::OnceLock::new();
+        SETS.get_or_init(read_cpu_sets).clone()
+    }
+
+    fn process_cpu_sets(&self, pid: u32) -> PResult<Vec<u32>> {
+        use ::windows::Win32::System::Threading::GetProcessDefaultCpuSets;
+        let h = open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION)?;
+        let mut ids = vec![0u32; 256];
+        let mut n = 0u32;
+        unsafe { GetProcessDefaultCpuSets(h.0, Some(&mut ids), &mut n) }
+            .ok()
+            .map_err(|e| format!("cannot read the game's CPU cores: {}", e.message()))?;
+        ids.truncate(n as usize);
+        Ok(ids)
+    }
+
+    fn set_process_cpu_sets(&self, pid: u32, ids: &[u32]) -> PResult<()> {
+        use ::windows::Win32::System::Threading::{SetProcessDefaultCpuSets, PROCESS_SET_LIMITED_INFORMATION};
+        let h = open_process(pid, PROCESS_SET_LIMITED_INFORMATION)?;
+        unsafe { SetProcessDefaultCpuSets(h.0, if ids.is_empty() { None } else { Some(ids) }) }
+            .ok()
+            .map_err(|e| format!("cannot choose the game's CPU cores: {}", e.message()))
     }
 
     fn exe_icon(&self, exe_path: &str, size: usize) -> Option<Icon> {
@@ -428,6 +456,72 @@ impl Platform for WinPlatform {
         }
         icon
     }
+}
+
+/// CPU sets with the size of the L3 cache each logical processor uses.
+fn read_cpu_sets() -> Vec<CpuSet> {
+    use ::windows::Win32::System::SystemInformation::{
+        GetLogicalProcessorInformationEx, GetSystemCpuSetInformation, RelationCache, SYSTEM_CPU_SET_INFORMATION,
+        SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX,
+    };
+    // L3 size per (processor group, logical processor index).
+    let mut l3 = std::collections::HashMap::new();
+    unsafe {
+        let mut len = 0u32;
+        let _ = GetLogicalProcessorInformationEx(RelationCache, None, &mut len);
+        let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+        if len > 0 && GetLogicalProcessorInformationEx(RelationCache, Some(buf.as_mut_ptr() as *mut SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX), &mut len).is_ok() {
+            let base = buf.as_ptr() as *const u8;
+            let mut off = 0usize;
+            while off + std::mem::size_of::<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>() <= len as usize {
+                let e = &*(base.add(off) as *const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX);
+                if e.Size == 0 {
+                    break;
+                }
+                let c = &e.Anonymous.Cache;
+                if e.Relationship == RelationCache && c.Level == 3 {
+                    let masks = std::slice::from_raw_parts(c.Anonymous.GroupMasks.as_ptr(), c.GroupCount.max(1) as usize);
+                    for m in masks {
+                        for bit in 0..usize::BITS {
+                            if m.Mask & (1usize << bit) != 0 {
+                                l3.insert((m.Group, bit as u8), c.CacheSize / 1024);
+                            }
+                        }
+                    }
+                }
+                off += e.Size as usize;
+            }
+        }
+    }
+    let mut out = Vec::new();
+    unsafe {
+        let mut len = 0u32;
+        let _ = GetSystemCpuSetInformation(None, 0, &mut len, None, None);
+        if len == 0 {
+            return out;
+        }
+        let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+        if !GetSystemCpuSetInformation(Some(buf.as_mut_ptr() as *mut SYSTEM_CPU_SET_INFORMATION), len, &mut len, None, None).as_bool() {
+            return out;
+        }
+        let base = buf.as_ptr() as *const u8;
+        let mut off = 0usize;
+        while off + 8 <= len as usize {
+            let e = &*(base.add(off) as *const SYSTEM_CPU_SET_INFORMATION);
+            if e.Size == 0 {
+                break;
+            }
+            let c = &e.Anonymous.CpuSet;
+            out.push(CpuSet {
+                id: c.Id,
+                llc: c.LastLevelCacheIndex,
+                l3_kb: l3.get(&(c.Group, c.LogicalProcessorIndex)).copied().unwrap_or(0),
+                efficiency: c.EfficiencyClass,
+            });
+            off += e.Size as usize;
+        }
+    }
+    out
 }
 
 /// (covers the whole monitor, share of the monitor covered)

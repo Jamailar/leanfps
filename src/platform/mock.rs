@@ -23,6 +23,8 @@ pub struct MockState {
     pub machine: Machine,
     pub graphics: HashMap<u32, bool>,
     pub overlay: String,
+    pub cpu_sets: Vec<CpuSet>,
+    pub proc_cpu_sets: HashMap<u32, Vec<u32>>,
     /// Operations that should fail, e.g. "set_priority:42".
     pub fail: Vec<String>,
 }
@@ -39,7 +41,7 @@ impl MockPlatform {
             mouse: [6, 10, 1],
             free_mb: 8000,
             overlay: "00000000-0000-0000-0000-000000000000".into(),
-            machine: Machine { laptop: false, os_build: 22631, cpu: "Mock CPU".into() },
+            machine: Machine { laptop: false, os_build: 22631, cpu: "Mock CPU".into(), ..Default::default() },
             ..Default::default()
         };
         MockPlatform { state: Mutex::new(s) }
@@ -186,7 +188,23 @@ impl Platform for MockPlatform {
         (0, 0)
     }
     fn machine(&self) -> Machine {
-        self.with(|s| s.machine.clone())
+        self.with(|s| Machine {
+            split_cache: s.machine.split_cache || cpu_target(&s.cpu_sets, CpuPrefer::LargestCache).is_some(),
+            hybrid: s.machine.hybrid || cpu_target(&s.cpu_sets, CpuPrefer::PerformanceCores).is_some(),
+            ..s.machine.clone()
+        })
+    }
+    fn cpu_sets(&self) -> Vec<CpuSet> {
+        self.with(|s| s.cpu_sets.clone())
+    }
+    fn process_cpu_sets(&self, pid: u32) -> PResult<Vec<u32>> {
+        self.check(&format!("process_cpu_sets:{pid}"))?;
+        Ok(self.with(|s| s.proc_cpu_sets.get(&pid).cloned().unwrap_or_default()))
+    }
+    fn set_process_cpu_sets(&self, pid: u32, ids: &[u32]) -> PResult<()> {
+        self.check(&format!("set_process_cpu_sets:{pid}"))?;
+        self.with(|s| s.proc_cpu_sets.insert(pid, ids.to_vec()));
+        Ok(())
     }
     fn exe_icon(&self, _exe_path: &str, size: usize) -> Option<Icon> {
         // A simple gradient square so the UI has something to draw.

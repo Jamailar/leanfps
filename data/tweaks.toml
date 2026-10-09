@@ -102,6 +102,18 @@ pro = true
 sources = ["https://nvidia.custhelp.com/app/answers/detail/a_id/5157", "https://raw.githubusercontent.com/ChrisTitusTech/winutil/main/config/tweaks.json"]
 actions = [{ type = "registry", key = "HKLM\\SOFTWARE\\Microsoft\\Windows\\Dwm", name = "OverlayTestMode", value = { dword = 5 } }]
 
+[[tweak]]
+id = "windowed_flip_model"
+title = "Optimizations for windowed games"
+summary = "Windowed and borderless DirectX 10/11 games present like fullscreen: lower latency, VRR works."
+detail = "Turns on the Windows 11 setting Settings > Display > Graphics > Optimizations for windowed games (HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences DirectXUserGlobalSettings, SwapEffectUpgradeEnable=1). Windows moves compatible games from the old copy (blt) presentation to flip model. Other entries in that setting (Auto HDR, VRR) are kept, and turning this off puts back only this entry. Restart running games to see the effect."
+scope = "persistent"
+risk = "low"
+presets = ["recommended", "competitive", "laptop"]
+min_build = 22000
+sources = ["https://support.microsoft.com/en-us/topic/3f006843-2c7e-4ed0-9a5e-f9389e535952", "https://elevenforum.com/t/turn-on-or-off-optimizations-for-windowed-games-in-windows-11.4943/"]
+actions = [{ type = "registry_field", key = "HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences", name = "DirectXUserGlobalSettings", field = "SwapEffectUpgradeEnable", value = "1" }]
+
 # ---------------------------------------------------------------- session (every game)
 
 [[tweak]]
@@ -189,6 +201,31 @@ risk = "medium"
 pro = true
 presets = ["competitive"]
 actions = [{ type = "game_priority", class = "high" }]
+
+[[tweak]]
+id = "game_on_vcache"
+title = "Game on the 3D V-Cache cores"
+summary = "Ryzen X3D with two dies: the game runs on the die with the big cache."
+detail = "On CPUs where one die has 3D V-Cache (such as Ryzen 9 7950X3D or 9950X3D), Windows sometimes schedules game threads on the other die, which costs FPS in cache-hungry games. While the game runs, LeanFPS sets its default CPU sets (a Windows scheduling hint, the same mechanism as CPUSetSetter and Process Lasso's CPU sets) to the V-Cache die. Nothing changes on disk; it ends with the game. Skipped if you already chose cores for the game."
+scope = "session"
+risk = "low"
+pro = true
+cpu = "split_cache"
+presets = ["recommended", "competitive", "laptop"]
+sources = ["https://learn.microsoft.com/windows/win32/procthread/cpu-sets", "https://alternativeto.net/software/cpusetsetter/about/"]
+actions = [{ type = "game_cpu_sets", prefer = "largest_cache" }]
+
+[[tweak]]
+id = "game_on_pcores"
+title = "Game on performance cores only"
+summary = "Intel hybrid CPUs: keeps the game off the efficiency cores. Helps some older games, can cost FPS in newer ones."
+detail = "While the game runs, sets its default CPU sets to the performance cores. Most new games are tuned for Thread Director and run fine on all cores, so this is off by default: try it with the frame counter on, and keep it only if the 1% low improves. Ends with the game. Skipped if you already chose cores for the game."
+scope = "session"
+risk = "medium"
+pro = true
+cpu = "hybrid"
+sources = ["https://learn.microsoft.com/windows/win32/procthread/cpu-sets"]
+actions = [{ type = "game_cpu_sets", prefer = "performance_cores" }]
 
 # ---------------------------------------------------------------- genre profiles
 
