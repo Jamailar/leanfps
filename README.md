@@ -34,7 +34,7 @@ src/session.rs        per-game session tweaks, crash recovery
 src/watcher.rs        background thread: foreground game detection every 2 s
 src/games/            game database, Steam/Epic library scan, classification
 src/platform/         Platform trait; win.rs = Win32, mock.rs = tests and Linux dev
-src/ui.rs             egui window (380 x 640)
+src/ui.rs             egui window (380 x 660), light and dark themes from the icon colors
 src/selftest.rs       `--selftest`: apply/verify/revert everything on a real system
 ```
 
@@ -103,3 +103,6 @@ via the shared gateway, website, code signing.
 Sources are SVG in `res/icon/` (`app.svg` large, `app-small.svg` for 16-32 px, `tray-idle.svg`,
 `tray-active.svg`). `res/icon/build-icons.sh` regenerates `res/leanfps.ico`,
 `res/tray-*.ico` and `res/window-64.rgba`. Preview: `docs/icons-preview.png`.
+
+The window uses Inter (SIL Open Font License, `res/fonts/OFL.txt`), subset to Latin to keep
+the exe small. Window preview in both themes: `docs/ui-preview.png`.
