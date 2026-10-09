@@ -136,6 +136,47 @@ pub fn run() -> i32 {
     }
     out!(log, "free memory: {:?} MB", pf.free_memory_mb());
 
+    out!(log, "\n== overhead (budgets: detection tick < 2 ms, memory < 40 MB without window)");
+    {
+        use crate::games::{classify, GameDb, Prefs, SteamGenres};
+        use std::time::Instant;
+        let t = Instant::now();
+        let db = GameDb::builtin();
+        let tags = SteamGenres::builtin();
+        out!(log, "game databases loaded in {} ms ({} curated, {} Steam genres)", t.elapsed().as_millis(), db.game.len(), tags.len());
+        let t = Instant::now();
+        let installed = crate::watcher::scan_installed();
+        out!(log, "installed-game scan: {} ms", t.elapsed().as_millis());
+        let prefs = Prefs::default();
+        let (cpu0, _) = pf.self_usage();
+        let n = 500u32;
+        let t = Instant::now();
+        for _ in 0..n {
+            // What the watcher does every 2 s: read the foreground window and judge it.
+            match pf.foreground() {
+                Some(fg) => {
+                    let pid = fg.pid;
+                    let _ = classify(&fg.exe_path, fg.fullscreen, fg.coverage, &|| pf.uses_graphics_api(pid), &db, &tags, &installed, &prefs);
+                }
+                None => {
+                    let _ = classify(r"C:\Games\Some Game\game.exe", false, 0.5, &|| None, &db, &tags, &installed, &prefs);
+                }
+            }
+        }
+        let tick_us = t.elapsed().as_micros() / n as u128;
+        let (cpu1, mem) = pf.self_usage();
+        out!(log, "detection tick: {tick_us} us average over {n} ticks (CPU {} ms total)", cpu1.saturating_sub(cpu0));
+        out!(log, "working set: {mem} MB");
+        if tick_us > 2000 {
+            failures += 1;
+            out!(log, "FAIL detection tick over budget");
+        }
+        if mem > 40 {
+            failures += 1;
+            out!(log, "FAIL memory over budget");
+        }
+    }
+
     let _ = std::fs::remove_dir_all(dir);
     out!(log, "\n{} failure(s)", failures);
     if failures == 0 {

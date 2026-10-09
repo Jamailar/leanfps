@@ -43,6 +43,10 @@ pub struct App {
     expanded: HashSet<String>,
     toast: Option<(String, bool, Instant)>,
     seen_version: u64,
+    /// Tweak states are read from the registry and power settings; cache them so redraws
+    /// don't touch the system. Refreshed after changes and every few seconds.
+    states: HashMap<String, TweakState>,
+    states_at: Option<Instant>,
 }
 
 impl App {
@@ -57,7 +61,23 @@ impl App {
         tx: Sender<Command>,
     ) -> App {
         style(&cc.egui_ctx);
-        App { engine, db, config, shared, store, per_game, tx, icons: HashMap::new(), expanded: HashSet::new(), toast: None, seen_version: 0 }
+        App { engine, db, config, shared, store, per_game, tx, icons: HashMap::new(), expanded: HashSet::new(), toast: None, seen_version: 0, states: HashMap::new(), states_at: None }
+    }
+
+    fn state(&mut self, id: &str) -> TweakState {
+        if self.states_at.is_none_or(|t| t.elapsed() > Duration::from_secs(5)) {
+            let ids: Vec<String> = self.engine.catalog.tweak.iter().map(|t| t.id.clone()).collect();
+            self.states = ids.into_iter().map(|id| {
+                let st = self.engine.state(&id);
+                (id, st)
+            }).collect();
+            self.states_at = Some(Instant::now());
+        }
+        self.states.get(id).cloned().unwrap_or(TweakState::NotApplied)
+    }
+
+    fn invalidate_states(&mut self) {
+        self.states_at = None;
     }
 
     fn catalog(&self) -> &Catalog {
@@ -95,6 +115,7 @@ impl App {
                 None => {}
             }
         }
+        self.invalidate_states();
         // Session tweaks take effect the next time the game is detected.
         let _ = self.tx.send(Command::Restart);
         if let Some(e) = errors.first() {
@@ -129,6 +150,7 @@ impl App {
     fn restore_all(&mut self) {
         self.config.lock().unwrap().set_preset("none");
         self.save_config();
+        self.invalidate_states();
         let mut errs = self.engine.revert_all();
         errs.extend(self.per_game.lock().unwrap().revert_all(&*self.engine.pf).into_iter().map(|e| ("per-game".to_string(), e)));
         let _ = self.tx.send(Command::Restart);
@@ -150,12 +172,12 @@ impl App {
                     Tier::Free => ("Free".to_string(), color::MUTED),
                 };
                 pill(ui, &text, c);
-                let persistent: Vec<&Tweak> = self.catalog().tweak.iter().filter(|t| t.scope == Scope::Persistent).collect();
                 let cfg = self.config.lock().unwrap().clone();
-                let wanted: Vec<&&Tweak> = persistent.iter().filter(|t| cfg.active(t)).collect();
+                let wanted: Vec<String> =
+                    self.catalog().tweak.iter().filter(|t| t.scope == Scope::Persistent && cfg.active(t)).map(|t| t.id.clone()).collect();
                 let done = wanted
                     .iter()
-                    .filter(|t| matches!(self.engine.state(&t.id), TweakState::Applied | TweakState::AlreadySet | TweakState::Unavailable(_)))
+                    .filter(|id| matches!(self.state(id), TweakState::Applied | TweakState::AlreadySet | TweakState::Unavailable(_)))
                     .count();
                 if !wanted.is_empty() {
                     let c = if done == wanted.len() { color::ACCENT } else { color::WARN };
@@ -368,7 +390,7 @@ impl App {
         let cfg = self.config.lock().unwrap().clone();
         let tier = cfg.tier();
         let locked = t.pro && tier == Tier::Free;
-        let state = self.engine.state(&t.id);
+        let state = self.state(&t.id);
         let unavailable = matches!(state, TweakState::Unavailable(_));
         let mut on = cfg.wants(t) && !locked;
         let open = self.expanded.contains(&t.id);
