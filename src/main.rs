@@ -80,7 +80,8 @@ fn run_window() {
         .with_title("LeanFPS")
         .with_inner_size(ui::WINDOW_SIZE)
         .with_min_inner_size([360.0, 480.0])
-        .with_maximize_button(false);
+        .with_maximize_button(false)
+        .with_icon(eframe::egui::IconData { rgba: include_bytes!("../res/window-64.rgba").to_vec(), width: 64, height: 64 });
     if always_on_top {
         viewport = viewport.with_window_level(eframe::egui::WindowLevel::AlwaysOnTop);
     }

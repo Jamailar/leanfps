@@ -1,6 +1,9 @@
 fn main() {
     println!("cargo:rerun-if-changed=res/leanfps.rc");
     println!("cargo:rerun-if-changed=res/leanfps.manifest");
+    println!("cargo:rerun-if-changed=res/leanfps.ico");
+    println!("cargo:rerun-if-changed=res/tray-idle.ico");
+    println!("cargo:rerun-if-changed=res/tray-active.ico");
     #[cfg(windows)]
     {}
     // Cross-compiling from Linux: cfg(windows) is false for the build script, so check the target.
