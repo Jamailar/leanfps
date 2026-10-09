@@ -5,7 +5,7 @@ use crate::catalog::{Priority, RegData};
 
 pub mod mock;
 #[cfg(windows)]
-pub mod windows;
+pub mod win;
 
 pub type PResult<T> = Result<T, String>;
 
@@ -73,7 +73,7 @@ pub trait Platform: Send + Sync {
 pub fn native() -> Box<dyn Platform> {
     #[cfg(windows)]
     {
-        Box::new(windows::WinPlatform::new())
+        Box::new(win::WinPlatform::new())
     }
     #[cfg(not(windows))]
     {
