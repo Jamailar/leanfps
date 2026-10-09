@@ -1,0 +1,281 @@
+//! Tweak catalog: what LeanFPS can change, loaded from `data/tweaks.toml`.
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Scope {
+    /// Written once, stays until the user reverts it.
+    Persistent,
+    /// Applied when a game starts, reverted when it exits.
+    Session,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Risk {
+    Low,
+    Medium,
+    High,
+}
+
+impl Risk {
+    pub fn label(self) -> &'static str {
+        match self {
+            Risk::Low => "Low risk",
+            Risk::Medium => "Medium risk",
+            Risk::High => "High risk",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Genre {
+    Shooter,
+    Moba,
+    Strategy,
+    OpenWorld,
+    Racing,
+    Sandbox,
+    Mmo,
+    Casual,
+}
+
+impl Genre {
+    pub const ALL: [Genre; 8] = [
+        Genre::Shooter,
+        Genre::Moba,
+        Genre::Strategy,
+        Genre::OpenWorld,
+        Genre::Racing,
+        Genre::Sandbox,
+        Genre::Mmo,
+        Genre::Casual,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Genre::Shooter => "Competitive shooter",
+            Genre::Moba => "MOBA",
+            Genre::Strategy => "Strategy",
+            Genre::OpenWorld => "Open world & RPG",
+            Genre::Racing => "Racing & sports",
+            Genre::Sandbox => "Sandbox & survival",
+            Genre::Mmo => "Online RPG",
+            Genre::Casual => "Casual & indie",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Form {
+    #[default]
+    Any,
+    Desktop,
+    Laptop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Priority {
+    Idle,
+    BelowNormal,
+    Normal,
+    AboveNormal,
+    High,
+}
+
+impl Priority {
+    pub fn label(self) -> &'static str {
+        match self {
+            Priority::Idle => "Idle",
+            Priority::BelowNormal => "Below normal",
+            Priority::Normal => "Normal",
+            Priority::AboveNormal => "Above normal",
+            Priority::High => "High",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegData {
+    Dword(u32),
+    Sz(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Action {
+    /// Set a registry value. `key` starts with `HKCU\` or `HKLM\`.
+    Registry { key: String, name: String, value: RegData },
+    /// Make a power scheme the active one.
+    PowerScheme { scheme: String },
+    /// Change a setting of the active power scheme. `dc` = None leaves battery value alone.
+    PowerSetting {
+        subgroup: String,
+        setting: String,
+        ac: u32,
+        #[serde(default)]
+        dc: Option<u32>,
+    },
+    /// "Enhance pointer precision". Applied live, no sign-out needed.
+    MouseAcceleration { enabled: bool },
+    /// CPU priority class of the running game.
+    GamePriority { class: Priority },
+    /// Opt the running game out of EcoQoS power throttling.
+    GamePowerThrottlingOff,
+    /// Keep the PC and display awake while the game runs.
+    KeepAwake,
+    /// Lower the priority of known background apps while the game runs.
+    BackgroundPriority { class: Priority, processes: Vec<String> },
+    /// Purge the standby memory list when free memory drops below a threshold.
+    StandbyPurge { below_free_mb: u64 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tweak {
+    pub id: String,
+    pub title: String,
+    pub summary: String,
+    pub detail: String,
+    pub scope: Scope,
+    pub risk: Risk,
+    #[serde(default)]
+    pub reboot: bool,
+    /// Presets that turn this tweak on.
+    #[serde(default)]
+    pub presets: Vec<String>,
+    #[serde(default)]
+    pub pro: bool,
+    /// Session tweaks only: limit to these genres. Empty = every game.
+    #[serde(default)]
+    pub genres: Vec<Genre>,
+    #[serde(default)]
+    pub form: Form,
+    #[serde(default)]
+    pub min_build: u32,
+    #[serde(default)]
+    pub sources: Vec<String>,
+    pub actions: Vec<Action>,
+}
+
+impl Tweak {
+    pub fn is_genre_specific(&self) -> bool {
+        !self.genres.is_empty()
+    }
+
+    pub fn applies_to_genre(&self, genre: Option<Genre>) -> bool {
+        self.genres.is_empty() || genre.is_some_and(|g| self.genres.contains(&g))
+    }
+
+    pub fn in_preset(&self, preset: &str) -> bool {
+        self.presets.iter().any(|p| p == preset)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PresetDef {
+    pub id: String,
+    pub title: String,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Catalog {
+    pub preset: Vec<PresetDef>,
+    pub tweak: Vec<Tweak>,
+}
+
+pub const BUILTIN_TWEAKS: &str = include_str!("../data/tweaks.toml");
+
+impl Catalog {
+    pub fn builtin() -> Catalog {
+        Catalog::parse(BUILTIN_TWEAKS).expect("built-in tweak catalog is valid")
+    }
+
+    pub fn parse(src: &str) -> Result<Catalog, String> {
+        let cat: Catalog = toml::from_str(src).map_err(|e| e.to_string())?;
+        cat.validate()?;
+        Ok(cat)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let mut seen = std::collections::HashSet::new();
+        for t in &self.tweak {
+            if !seen.insert(t.id.as_str()) {
+                return Err(format!("duplicate tweak id {}", t.id));
+            }
+            if t.actions.is_empty() {
+                return Err(format!("tweak {} has no actions", t.id));
+            }
+            for p in &t.presets {
+                if !self.preset.iter().any(|d| &d.id == p) {
+                    return Err(format!("tweak {} uses unknown preset {p}", t.id));
+                }
+            }
+            if t.scope == Scope::Persistent && !t.genres.is_empty() {
+                return Err(format!("persistent tweak {} cannot be genre-specific", t.id));
+            }
+            for a in &t.actions {
+                let session_only = matches!(
+                    a,
+                    Action::GamePriority { .. }
+                        | Action::GamePowerThrottlingOff
+                        | Action::KeepAwake
+                        | Action::BackgroundPriority { .. }
+                        | Action::StandbyPurge { .. }
+                );
+                if session_only && t.scope != Scope::Session {
+                    return Err(format!("tweak {}: action {a:?} needs session scope", t.id));
+                }
+                if let Action::Registry { key, .. } = a {
+                    if !(key.starts_with("HKCU\\") || key.starts_with("HKLM\\")) {
+                        return Err(format!("tweak {}: registry key must start with HKCU\\ or HKLM\\", t.id));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get(&self, id: &str) -> Option<&Tweak> {
+        self.tweak.iter().find(|t| t.id == id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_catalog_parses() {
+        let c = Catalog::builtin();
+        assert!(c.tweak.len() >= 10);
+        assert!(c.preset.iter().any(|p| p.id == "recommended"));
+        // Every genre has at least one genre-specific tweak or relies on the generic set.
+        assert!(c.tweak.iter().any(|t| t.genres.contains(&Genre::Shooter)));
+    }
+
+    #[test]
+    fn rejects_persistent_genre_tweak() {
+        let src = r#"
+[[preset]]
+id = "recommended"
+title = "R"
+summary = "R"
+[[tweak]]
+id = "x"
+title = "x"
+summary = "x"
+detail = "x"
+scope = "persistent"
+risk = "low"
+genres = ["shooter"]
+actions = [{ type = "keep_awake" }]
+"#;
+        assert!(Catalog::parse(src).is_err());
+    }
+}
