@@ -469,11 +469,13 @@ fn read_cpu_sets() -> Vec<CpuSet> {
     unsafe {
         let mut len = 0u32;
         let _ = GetLogicalProcessorInformationEx(RelationCache, None, &mut len);
-        let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+        // Padded: the last entry may be shorter than the struct it is read through.
+        let mut buf = vec![0u64; (len as usize).div_ceil(8) + 16];
         if len > 0 && GetLogicalProcessorInformationEx(RelationCache, Some(buf.as_mut_ptr() as *mut SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX), &mut len).is_ok() {
             let base = buf.as_ptr() as *const u8;
             let mut off = 0usize;
-            while off + std::mem::size_of::<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>() <= len as usize {
+            // Entries are as long as their own Size, often shorter than the full union.
+            while off + 8 <= len as usize {
                 let e = &*(base.add(off) as *const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX);
                 if e.Size == 0 {
                     break;
@@ -500,7 +502,8 @@ fn read_cpu_sets() -> Vec<CpuSet> {
         if len == 0 {
             return out;
         }
-        let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+        // Padded: the last entry may be shorter than the struct it is read through.
+        let mut buf = vec![0u64; (len as usize).div_ceil(8) + 16];
         if !GetSystemCpuSetInformation(Some(buf.as_mut_ptr() as *mut SYSTEM_CPU_SET_INFORMATION), len, &mut len, None, None).as_bool() {
             return out;
         }

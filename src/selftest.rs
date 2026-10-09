@@ -134,6 +134,10 @@ pub fn run() -> i32 {
             let sets = pf.cpu_sets();
             out!(log, "cpu sets: {} logical processors, L3 sizes {:?} KB, efficiency classes {:?}", sets.len(),
                 sets.iter().map(|s| s.l3_kb).collect::<std::collections::BTreeSet<_>>(), sets.iter().map(|s| s.efficiency).collect::<std::collections::BTreeSet<_>>());
+            if !sets.is_empty() && sets.iter().all(|s| s.l3_kb == 0) {
+                // Not fatal (the V-Cache tweak just stays off), but worth seeing in the log.
+                out!(log, "NOTE no L3 cache sizes reported for this CPU");
+            }
             if sets.len() >= 2 {
                 let want: Vec<u32> = sets.iter().take(sets.len() / 2).map(|s| s.id).collect();
                 let before = pf.process_cpu_sets(pid);
