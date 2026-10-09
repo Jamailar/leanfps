@@ -1,0 +1,36 @@
+name: genre-db
+
+# Rebuilds data/steam_genres.tsv from SteamSpy tag votes. Slow (SteamSpy allows 1 request per
+# second), so it only runs when asked or when the tools change. Download the artifact and
+# commit it.
+on:
+  workflow_dispatch:
+    inputs:
+      pages:
+        description: "SteamSpy pages (1000 most-owned apps each)"
+        default: "4"
+  push:
+    paths:
+      - tools/fetch_steamspy.py
+      - tools/build_genre_db.py
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch tag votes
+        run: python3 tools/fetch_steamspy.py "${{ github.event.inputs.pages || '4' }}" details.jsonl
+      - name: Build genre table
+        run: |
+          python3 tools/build_genre_db.py details.jsonl > data/steam_genres.tsv
+          wc -l data/steam_genres.tsv
+          grep -P '^(730|570|1172470|1245620|271590)\t' data/steam_genres.tsv || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: steam-genres
+          path: |
+            data/steam_genres.tsv
+            details.jsonl
+          retention-days: 30
