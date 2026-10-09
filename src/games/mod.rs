@@ -326,6 +326,14 @@ mod tests {
     }
 
     #[test]
+    fn builtin_steam_genre_table_is_filled() {
+        let t = SteamGenres::builtin();
+        assert!(t.len() > 3000, "data/steam_genres.tsv has only {} games", t.len());
+        assert_eq!(t.by_appid(578080), Some(Genre::Shooter));
+        assert_eq!(t.by_name("Cyberpunk 2077"), Some(Genre::OpenWorld));
+    }
+
+    #[test]
     fn emulators_are_games_without_genre() {
         let e = info(run(r"C:\Emu\Ryujinx.exe", false, 0.5, None, &[], &Prefs::default()));
         assert_eq!((e.source, e.genre), (Source::Known, None));
