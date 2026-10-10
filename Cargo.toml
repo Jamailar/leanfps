@@ -1,6 +1,6 @@
 [package]
 name = "leanfps"
-version = "0.1.146"
+version = "0.1.147"
 edition = "2021"
 description = "Tiny game performance optimizer for Windows"
 license = "MIT"
