@@ -31,6 +31,8 @@ pub struct Config {
     pub start_with_windows: bool,
     /// "system", "light" or "dark".
     pub theme: String,
+    /// The main window lists every optimization, not just the preset picker.
+    pub show_all_settings: bool,
 }
 
 impl Default for Config {
@@ -48,6 +50,7 @@ impl Default for Config {
             close_to_tray: true,
             start_with_windows: false,
             theme: "system".into(),
+            show_all_settings: false,
         }
     }
 }

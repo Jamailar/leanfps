@@ -860,7 +860,7 @@ impl App {
                         ui.set_max_width(ui.available_width() - 104.0);
                         ui.label(overline("Get started", p.accent_text));
                         ui.label(RichText::new(format!("Apply {n} recommended system settings")).font(FontId::new(14.5, semi())).color(p.text));
-                        ui.label(RichText::new("Every change is listed below and can be undone.").small().color(p.muted));
+                        ui.label(RichText::new("Every change can be undone. See them under All settings.").small().color(p.muted));
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         go = primary_button(ui, "Optimize").clicked();
@@ -906,6 +906,39 @@ impl App {
         if let Some(id) = choose {
             self.set_preset(&id);
         }
+    }
+
+    /// Simple view by default: the preset decides, the full list stays folded away. Returns
+    /// whether the list is shown.
+    fn all_settings_toggle(&mut self, ui: &mut Ui, cat: &Catalog, cfg: &Config, progress: Option<(usize, usize)>) -> bool {
+        let p = pal(ui);
+        let open = cfg.show_all_settings;
+        let on = cat.tweak.iter().filter(|t| cfg.active(t)).count();
+        ui.add_space(10.0);
+        let resp = ui
+            .horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(Vec2::new(10.0, 14.0), Sense::hover());
+                chevron(ui.painter(), r.center(), open, p.muted);
+                ui.label(RichText::new("All settings").font(FontId::new(13.0, semi())).color(p.text));
+                ui.label(RichText::new(format!("{on} of {} on", cat.tweak.len())).small().color(p.muted));
+                if let (false, Some((done, total))) = (open, progress) {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let c = if done == total { p.accent_text } else { p.warn };
+                        ui.label(RichText::new(format!("{done}/{total} system applied")).small().color(c));
+                    });
+                }
+            })
+            .response
+            .interact(Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if resp.clicked() {
+            self.config.lock().unwrap().show_all_settings = !open;
+            self.save_config();
+        }
+        if !open {
+            ui.label(RichText::new("The preset picks these for you. Open to turn single changes on or off.").small().color(p.muted));
+        }
+        open
     }
 
     fn group(&mut self, ui: &mut Ui, title: &str, hint: &str, tweaks: Vec<Tweak>, progress: Option<(usize, usize)>) {
@@ -1157,10 +1190,12 @@ impl eframe::App for App {
                     ui.add_space(14.0);
                 }
                 self.preset_row(ui);
-                let by = |f: &dyn Fn(&Tweak) -> bool| cat.tweak.iter().filter(|t| f(t)).cloned().collect::<Vec<_>>();
-                self.group(ui, "System", "Changed once, kept until you undo them.", by(&|t| t.scope == Scope::Persistent), progress);
-                self.group(ui, "While gaming", "On when a game starts, undone when it closes.", by(&|t| t.scope == Scope::Session && !t.is_genre_specific()), None);
-                self.group(ui, "Game profiles", "Extra changes for the type of game you are playing.", by(&|t| t.is_genre_specific()), None);
+                if self.all_settings_toggle(ui, &cat, &cfg, progress) {
+                    let by = |f: &dyn Fn(&Tweak) -> bool| cat.tweak.iter().filter(|t| f(t)).cloned().collect::<Vec<_>>();
+                    self.group(ui, "System", "Changed once, kept until you undo them.", by(&|t| t.scope == Scope::Persistent), progress);
+                    self.group(ui, "While gaming", "On when a game starts, undone when it closes.", by(&|t| t.scope == Scope::Session && !t.is_genre_specific()), None);
+                    self.group(ui, "Game profiles", "Extra changes for the type of game you are playing.", by(&|t| t.is_genre_specific()), None);
+                }
                 ui.add_space(8.0);
             });
             ui.scope(|ui| {
