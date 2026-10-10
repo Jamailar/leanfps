@@ -182,6 +182,8 @@ pub struct App {
     /// from boot, so that subtraction panics when the PC has been up less than six hours.
     license_checked: Option<Instant>,
     activation: Option<Activation>,
+    /// When the main switch was last flipped, for its sweep and ripple.
+    power_flipped: Option<Instant>,
 }
 
 /// Results of license calls, which run on a worker thread so the window never waits.
@@ -254,6 +256,7 @@ impl App {
             tray_active: None,
             quitting: false,
             autostart_choice: true,
+            power_flipped: None,
             logo,
             _gradient: gradient,
             licenses,
@@ -505,6 +508,91 @@ impl App {
         }
     }
 
+    fn set_paused(&mut self, paused: bool) {
+        self.config.lock().unwrap().paused = paused;
+        self.save_config();
+        self.power_flipped = Some(Instant::now());
+        let n = self.sync();
+        let mut errs = Vec::new();
+        if paused {
+            errs = self.per_game.lock().unwrap().revert_all(&*self.engine.pf);
+        }
+        let _ = self.tx.send(Command::Restart);
+        match (paused, errs.first()) {
+            (_, Some(e)) => self.notify(format!("Could not undo: {e}"), false),
+            (true, None) => self.notify("Optimization off. Windows is back to its own settings.", true),
+            (false, None) => self.notify(format!("Optimization on. {n} system settings applied."), true),
+        }
+    }
+
+    /// The main on/off switch for all of LeanFPS.
+    fn power_card(&mut self, ui: &mut Ui, cat: &Catalog, cfg: &Config) {
+        let p = pal(ui);
+        let on = !cfg.paused;
+        let ready = cat.tweak.iter().filter(|t| cfg.wants(t) && (!t.pro || cfg.tier() != Tier::Free)).count();
+        let t = ease(ui.ctx().animate_bool_with_time(ui.id().with("power"), on, 0.45));
+        let since = self.power_flipped.map(|at| at.elapsed().as_secs_f32()).unwrap_or(f32::MAX);
+        let mut flip = false;
+        let resp = egui::Frame::NONE
+            .fill(p.card)
+            .stroke(Stroke::new(1.0, lerp_color(p.border, p.accent_line, t)))
+            .corner_radius(16)
+            .inner_margin(Margin { left: 14, right: 12, top: 12, bottom: 12 })
+            .shadow(Shadow { offset: [0, 8], blur: 24, spread: 0, color: p.shadow })
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_max_width(ui.available_width() - 84.0);
+                        ui.label(overline("Game optimization", lerp_color(p.faint, p.accent_text, t)));
+                        let (big, small) = if on {
+                            // Counts up as the switch lights.
+                            let shown = (ready as f32 * t).round() as usize;
+                            (format!("On · {shown} optimizations"), "Applied now and every time a game starts.")
+                        } else {
+                            ("Off".to_string(), "Nothing is changed. Your settings are kept for later.")
+                        };
+                        ui.label(RichText::new(big).font(FontId::new(17.0, heavy())).color(lerp_color(p.muted, p.text, t)));
+                        ui.label(RichText::new(small).small().color(p.muted));
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        flip = ui.add(PowerSwitch { t, on, since }).clicked();
+                    });
+                });
+            })
+            .response;
+        let r = resp.rect;
+        let painter = ui.painter();
+        // Mint glow under the card while on.
+        if t > 0.0 {
+            painter.add(RectShape::filled(r.shrink(10.0).translate(Vec2::new(0.0, 6.0)), 16, p.accent.gamma_multiply(0.16 * t)).with_blur_width(28.0));
+        }
+        // Speed lines race across the card when it turns on; a dim wipe when it turns off.
+        const SWEEP: f32 = 0.7;
+        if since < SWEEP {
+            let k = since / SWEEP;
+            let clip = painter.with_clip_rect(r.shrink(1.0).intersect(ui.clip_rect()));
+            if on {
+                for (dy, len, lag, o) in [(0.28, 120.0, 0.0, 0.9), (0.5, 180.0, 0.08, 1.0), (0.72, 90.0, 0.16, 0.7)] {
+                    let k = ((k - lag) / (1.0 - lag)).clamp(0.0, 1.0);
+                    let x = egui::lerp(r.left() - len..=r.right() + len, ease(k));
+                    let y = r.top() + r.height() * dy;
+                    let fade = o * (1.0 - k);
+                    streak(&clip, pos2(x - len, y), pos2(x, y), p.accent.gamma_multiply(fade));
+                }
+            } else {
+                let x = egui::lerp(r.right()..=r.left(), ease(k));
+                clip.rect_filled(Rect::from_min_max(pos2(x, r.top()), r.right_bottom()), 16, p.bg.gamma_multiply(0.25 * (1.0 - k)));
+            }
+        }
+        if since < 1.0 {
+            ui.ctx().request_repaint();
+        }
+        if flip {
+            self.set_paused(on);
+        }
+    }
+
     fn restore_all(&mut self) {
         self.config.lock().unwrap().set_preset("none");
         self.save_config();
@@ -663,7 +751,8 @@ impl App {
         let p = pal(ui);
         let session = self.shared.lock().unwrap().session.clone();
         let installed = self.shared.lock().unwrap().installed.len();
-        hero(ui, session.is_some(), |ui| {
+        let paused = self.config.lock().unwrap().paused;
+        hero(ui, session.is_some() && !paused, |ui| {
             let Some(s) = session else {
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(Vec2::splat(52.0), Sense::hover());
@@ -721,8 +810,12 @@ impl App {
                 ui.add_space(4.0);
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        live_dot(ui);
-                        ui.label(overline("Optimizing now", p.accent_text));
+                        if paused {
+                            ui.label(overline("Playing · optimization off", p.faint));
+                        } else {
+                            live_dot(ui);
+                            ui.label(overline("Optimizing now", p.accent_text));
+                        }
                     });
                     ui.label(RichText::new(&s.game.name).font(FontId::new(17.0, semi())).color(p.text));
                     ui.horizontal(|ui| {
@@ -860,7 +953,7 @@ impl App {
                         ui.set_max_width(ui.available_width() - 104.0);
                         ui.label(overline("Get started", p.accent_text));
                         ui.label(RichText::new(format!("Apply {n} recommended system settings")).font(FontId::new(14.5, semi())).color(p.text));
-                        ui.label(RichText::new("Every change is listed below and can be undone.").small().color(p.muted));
+                        ui.label(RichText::new("Every change can be undone. See them under All settings.").small().color(p.muted));
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         go = primary_button(ui, "Optimize").clicked();
@@ -906,6 +999,39 @@ impl App {
         if let Some(id) = choose {
             self.set_preset(&id);
         }
+    }
+
+    /// Simple view by default: the preset decides, the full list stays folded away. Returns
+    /// whether the list is shown.
+    fn all_settings_toggle(&mut self, ui: &mut Ui, cat: &Catalog, cfg: &Config, progress: Option<(usize, usize)>) -> bool {
+        let p = pal(ui);
+        let open = cfg.show_all_settings;
+        let on = cat.tweak.iter().filter(|t| cfg.wants(t)).count();
+        ui.add_space(10.0);
+        let resp = ui
+            .horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(Vec2::new(10.0, 14.0), Sense::hover());
+                chevron(ui.painter(), r.center(), open, p.muted);
+                ui.label(RichText::new("All settings").font(FontId::new(13.0, semi())).color(p.text));
+                ui.label(RichText::new(format!("{on} of {} on", cat.tweak.len())).small().color(p.muted));
+                if let (false, Some((done, total))) = (open, progress) {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let c = if done == total { p.accent_text } else { p.warn };
+                        ui.label(RichText::new(format!("{done}/{total} system applied")).small().color(c));
+                    });
+                }
+            })
+            .response
+            .interact(Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if resp.clicked() {
+            self.config.lock().unwrap().show_all_settings = !open;
+            self.save_config();
+        }
+        if !open {
+            ui.label(RichText::new("The preset picks these for you. Open to turn single changes on or off.").small().color(p.muted));
+        }
+        open
     }
 
     fn group(&mut self, ui: &mut Ui, title: &str, hint: &str, tweaks: Vec<Tweak>, progress: Option<(usize, usize)>) {
@@ -1149,6 +1275,8 @@ impl eframe::App for App {
                 ui.set_max_width(width);
                 // Room for the card shadows at the top.
                 ui.add_space(2.0);
+                self.power_card(ui, &cat, &cfg);
+                ui.add_space(12.0);
                 self.game_card(ui);
                 ui.add_space(12.0);
                 self.candidate(ui);
@@ -1156,11 +1284,16 @@ impl eframe::App for App {
                     self.welcome(ui);
                     ui.add_space(14.0);
                 }
-                self.preset_row(ui);
-                let by = |f: &dyn Fn(&Tweak) -> bool| cat.tweak.iter().filter(|t| f(t)).cloned().collect::<Vec<_>>();
-                self.group(ui, "System", "Changed once, kept until you undo them.", by(&|t| t.scope == Scope::Persistent), progress);
-                self.group(ui, "While gaming", "On when a game starts, undone when it closes.", by(&|t| t.scope == Scope::Session && !t.is_genre_specific()), None);
-                self.group(ui, "Game profiles", "Extra changes for the type of game you are playing.", by(&|t| t.is_genre_specific()), None);
+                // With the main switch off the choices stay visible but can't be changed.
+                ui.add_enabled_ui(!cfg.paused, |ui| {
+                    self.preset_row(ui);
+                    if self.all_settings_toggle(ui, &cat, &cfg, progress) {
+                        let by = |f: &dyn Fn(&Tweak) -> bool| cat.tweak.iter().filter(|t| f(t)).cloned().collect::<Vec<_>>();
+                        self.group(ui, "System", "Changed once, kept until you undo them.", by(&|t| t.scope == Scope::Persistent), progress);
+                        self.group(ui, "While gaming", "On when a game starts, undone when it closes.", by(&|t| t.scope == Scope::Session && !t.is_genre_specific()), None);
+                        self.group(ui, "Game profiles", "Extra changes for the type of game you are playing.", by(&|t| t.is_genre_specific()), None);
+                    }
+                });
                 ui.add_space(8.0);
             });
             ui.scope(|ui| {
@@ -1576,6 +1709,89 @@ fn state_text(state: &TweakState, t: &Tweak, on: bool) -> (String, Tone) {
 }
 
 /// Switch with the mint gradient when on.
+fn ease(t: f32) -> f32 {
+    // Ease out cubic: quick start, soft landing.
+    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
+}
+
+fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
+    a.lerp_to_gamma(b, t.clamp(0.0, 1.0))
+}
+
+/// A line that fades in from its tail to a bright head.
+fn streak(painter: &egui::Painter, from: Pos2, to: Pos2, c: Color32) {
+    let mut mesh = egui::Mesh::default();
+    let r = Rect::from_min_max(pos2(from.x, from.y - 1.5), pos2(to.x, to.y + 1.5));
+    mesh.colored_vertex(r.left_top(), Color32::TRANSPARENT);
+    mesh.colored_vertex(r.right_top(), c);
+    mesh.colored_vertex(r.right_bottom(), c);
+    mesh.colored_vertex(r.left_bottom(), Color32::TRANSPARENT);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    painter.add(mesh);
+    painter.circle_filled(to, 2.0, c);
+}
+
+/// The big main switch: the track fills with the mint gradient behind the knob, the knob
+/// carries a power mark, and turning on sends out a ripple.
+struct PowerSwitch {
+    /// Eased position, 0 = off, 1 = on.
+    t: f32,
+    on: bool,
+    /// Seconds since the last flip.
+    since: f32,
+}
+
+impl egui::Widget for PowerSwitch {
+    fn ui(self, ui: &mut Ui) -> egui::Response {
+        let p = pal(ui);
+        let PowerSwitch { t, on, since } = self;
+        let (rect, resp) = ui.allocate_exact_size(Vec2::new(72.0, 38.0), Sense::click());
+        let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+        let painter = ui.painter();
+        let radius = 19u8;
+        let hover = resp.hovered();
+        painter.rect_filled(rect, radius, p.track_off);
+        painter.rect_stroke(rect, radius, Stroke::new(1.0, if hover { p.accent_line } else { p.border }), StrokeKind::Inside);
+        let x = egui::lerp(rect.left() + 19.0..=rect.right() - 19.0, t);
+        let knob = pos2(x, rect.center().y);
+        if t > 0.0 {
+            painter.add(RectShape::filled(rect.translate(Vec2::new(0.0, 3.0)), radius, p.accent.gamma_multiply(0.45 * t)).with_blur_width(16.0));
+            let lit = Rect::from_min_max(rect.min, pos2(x + 19.0, rect.bottom()));
+            gradient_fill(&painter.with_clip_rect(lit.intersect(ui.clip_rect())), rect, radius);
+        }
+        // Ripple: two rings that grow out of the knob after it lands.
+        if on && since < 0.9 {
+            for delay in [0.15, 0.32] {
+                let k = ((since - delay) / 0.55).clamp(0.0, 1.0);
+                if k > 0.0 && k < 1.0 {
+                    painter.circle_stroke(knob, 15.0 + 17.0 * ease(k), Stroke::new(2.0 * (1.0 - k), p.accent.gamma_multiply(1.0 - k)));
+                }
+            }
+        }
+        // A small squash while travelling makes the knob feel physical.
+        let travel = (t * (1.0 - t) * 4.0).clamp(0.0, 1.0);
+        let size = Vec2::new(30.0 + 6.0 * travel, 30.0 - 2.0 * travel);
+        let k = Rect::from_center_size(knob, size);
+        painter.add(RectShape::filled(k.translate(Vec2::new(0.0, 2.0)), 15, Color32::from_black_alpha(70)).with_blur_width(6.0));
+        painter.rect_filled(k, 15, Color32::WHITE);
+        // Power mark: an open ring and a stem, grey when off, mint when on.
+        let mark = lerp_color(p.muted, DARK.accent.lerp_to_gamma(Color32::BLACK, 0.25), t);
+        let stroke = Stroke::new(2.0, mark);
+        let ring: Vec<Pos2> = (0..=24)
+            .map(|i| {
+                // Gap at the top, where the stem goes.
+                let gap = 0.62;
+                let a = -std::f32::consts::FRAC_PI_2 + egui::lerp(gap..=std::f32::consts::TAU - gap, i as f32 / 24.0);
+                knob + Vec2::angled(a) * 7.0
+            })
+            .collect();
+        painter.line(ring, stroke);
+        painter.line_segment([knob + Vec2::new(0.0, -8.5), knob + Vec2::new(0.0, -1.5)], stroke);
+        resp
+    }
+}
+
 struct Toggle<'a>(&'a mut bool);
 
 impl egui::Widget for Toggle<'_> {
