@@ -7,6 +7,7 @@ use crate::catalog::{Catalog, Genre, Risk, Scope, Tweak};
 use crate::config::{Config, Tier, PRICE};
 use crate::engine::{Engine, TweakState};
 use crate::games::GameDb;
+use crate::license::{ApiError, Device, Licenses, State as LicenseState};
 use crate::store::Store;
 use crate::watcher::{Command, Shared};
 use eframe::egui::{
@@ -173,7 +174,35 @@ pub struct App {
     autostart_choice: bool,
     logo: TextureHandle,
     _gradient: TextureHandle,
+    licenses: Arc<Licenses>,
+    license: LicenseState,
+    license_tx: Sender<LicenseEvent>,
+    license_rx: std::sync::mpsc::Receiver<LicenseEvent>,
+    license_checked: Instant,
+    activation: Option<Activation>,
 }
+
+/// Results of license calls, which run on a worker thread so the window never waits.
+enum LicenseEvent {
+    Activated(Result<LicenseState, ApiError>),
+    Refreshed(Result<LicenseState, ApiError>),
+    DeviceRemoved(Result<(), ApiError>),
+    Deactivated(Result<(), ApiError>),
+}
+
+/// The "Activate LeanFPS Pro" dialog.
+#[derive(Default)]
+struct Activation {
+    key: String,
+    email: String,
+    busy: bool,
+    error: Option<String>,
+    /// Shown when every seat is taken, so one can be freed right here.
+    devices: Vec<Device>,
+}
+
+/// How often a running LeanFPS asks whether its license file is due for a refresh.
+const LICENSE_CHECK: Duration = Duration::from_secs(6 * 3600);
 
 impl App {
     pub fn new(
@@ -185,6 +214,7 @@ impl App {
         store: Store,
         per_game: Arc<Mutex<crate::pergame::PerGame>>,
         tx: Sender<Command>,
+        licenses: Arc<Licenses>,
     ) -> App {
         style(&cc.egui_ctx);
         cc.egui_ctx.set_theme(theme_pref(&config.lock().unwrap().theme));
@@ -201,6 +231,8 @@ impl App {
         let (ttx, tray_rx) = std::sync::mpsc::channel();
         let ctx = cc.egui_ctx.clone();
         let tray = crate::tray::Tray::start(ttx, Box::new(move || ctx.request_repaint()));
+        let (license_tx, license_rx) = std::sync::mpsc::channel();
+        let license = licenses.state();
         App {
             engine,
             db,
@@ -222,6 +254,169 @@ impl App {
             autostart_choice: true,
             logo,
             _gradient: gradient,
+            licenses,
+            license,
+            license_tx,
+            license_rx,
+            // Due right away, so a file that asks for a refresh gets one at start.
+            license_checked: Instant::now() - LICENSE_CHECK,
+            activation: None,
+        }
+    }
+
+    /// Run a license call off the UI thread; the answer arrives in `license_events`.
+    fn license_job(&self, ctx: &egui::Context, job: impl FnOnce(&Licenses) -> LicenseEvent + Send + 'static) {
+        let (licenses, tx, ctx) = (self.licenses.clone(), self.license_tx.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(job(&licenses));
+            ctx.request_repaint();
+        });
+    }
+
+    /// A new license state: Pro tweaks follow it (applied with their prior values recorded,
+    /// or undone) and session tweaks pick it up when the watcher restarts.
+    fn set_license(&mut self, state: LicenseState) {
+        let pro = state.is_pro() || crate::license::dev_pro();
+        self.license = state;
+        let changed = {
+            let mut cfg = self.config.lock().unwrap();
+            let changed = cfg.pro != pro;
+            cfg.pro = pro;
+            changed
+        };
+        if changed {
+            self.sync();
+        }
+    }
+
+    fn license_events(&mut self, ctx: &egui::Context) {
+        if self.license_checked.elapsed() >= LICENSE_CHECK && self.license.payload().is_some() {
+            self.license_checked = Instant::now();
+            self.license_job(ctx, |l| LicenseEvent::Refreshed(l.refresh_if_due(false)));
+        }
+        while let Ok(ev) = self.license_rx.try_recv() {
+            match ev {
+                LicenseEvent::Activated(Ok(state)) => {
+                    self.activation = None;
+                    self.set_license(state);
+                    self.notify("LeanFPS Pro is active on this PC. Thank you!", true);
+                }
+                LicenseEvent::Activated(Err(e)) => {
+                    if let Some(a) = &mut self.activation {
+                        a.busy = false;
+                        a.devices = if e.code == "LICENSE_SEATS_FULL" { e.devices() } else { Vec::new() };
+                        a.error = Some(e.message());
+                    }
+                }
+                LicenseEvent::DeviceRemoved(r) => {
+                    if let Some(a) = &mut self.activation {
+                        a.busy = false;
+                        match r {
+                            Ok(()) => {
+                                a.devices.clear();
+                                a.error = Some("PC removed. Activate again to use this PC.".into());
+                            }
+                            Err(e) => a.error = Some(e.message()),
+                        }
+                    }
+                }
+                LicenseEvent::Refreshed(r) => {
+                    let lost = r.as_ref().err().map(|e| e.message());
+                    self.set_license(self.licenses.state());
+                    if let Some(msg) = lost {
+                        self.notify(format!("Pro was turned off: {msg}"), false);
+                    }
+                }
+                LicenseEvent::Deactivated(r) => {
+                    self.set_license(self.licenses.state());
+                    match r {
+                        Ok(()) => self.notify("Pro was removed from this PC. Its seat is free for another PC.", true),
+                        Err(_) => self.notify("Pro was removed from this PC. The server could not be reached, so free the seat on leanfps.com/license.", false),
+                    }
+                }
+            }
+        }
+    }
+
+    fn activation_dialog(&mut self, ctx: &egui::Context) {
+        let Some(mut a) = self.activation.take() else { return };
+        let mut close = false;
+        let mut submit = false;
+        let mut remove: Option<String> = None;
+        let modal = egui::Modal::new(egui::Id::new("activate")).show(ctx, |ui| {
+            let p = pal(ui);
+            ui.set_width(300.0);
+            ui.label(RichText::new("Activate LeanFPS Pro").font(FontId::new(16.0, heavy())).color(p.text));
+            ui.add_space(4.0);
+            ui.label(RichText::new("Enter the key from your purchase email and the email you bought with. Activation needs the internet once; after that Pro works offline.").small().color(p.muted));
+            ui.add_space(10.0);
+            ui.label(RichText::new("License key").small().color(p.muted));
+            let key = ui.add_enabled(!a.busy, egui::TextEdit::singleline(&mut a.key).hint_text("LFPS-XXXXX-XXXXX-XXXXX-XXXXX").desired_width(f32::INFINITY));
+            ui.add_space(6.0);
+            ui.label(RichText::new("Purchase email").small().color(p.muted));
+            let email = ui.add_enabled(!a.busy, egui::TextEdit::singleline(&mut a.email).hint_text("you@example.com").desired_width(f32::INFINITY));
+            if a.key.is_empty() && !key.has_focus() && !email.has_focus() {
+                key.request_focus();
+            }
+            let enter = (key.lost_focus() || email.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if let Some(err) = &a.error {
+                ui.add_space(8.0);
+                ui.label(RichText::new(err).small().color(Tone::Warn.color(p)));
+            }
+            for d in &a.devices {
+                ui.horizontal(|ui| {
+                    let seen = d.last_seen_at.as_deref().map(|t| t.get(..10).unwrap_or(t)).unwrap_or("");
+                    ui.label(RichText::new(format!("{}  {}", d.device_name.as_deref().unwrap_or("PC"), seen)).small().color(p.text));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if !d.current && ui.add_enabled(!a.busy, egui::Button::new(RichText::new("Remove").small())).clicked() {
+                            remove = Some(d.id.clone());
+                        }
+                    });
+                });
+            }
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ghost_button(ui, "Cancel").clicked() {
+                    close = true;
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let label = if a.busy { "Activating…" } else { "Activate" };
+                    if (primary_button(ui, label).clicked() || enter) && !a.busy {
+                        submit = true;
+                    }
+                });
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.link(RichText::new(format!("Buy a key ({PRICE})")).small()).clicked() {
+                    open_url(crate::license::BUY_URL);
+                }
+                ui.label(RichText::new("·").small().color(p.faint));
+                if ui.link(RichText::new("Lost your key?").small()).clicked() {
+                    open_url(crate::license::MANAGE_URL);
+                }
+            });
+        });
+        if modal.should_close() && !a.busy {
+            close = true;
+        }
+        if submit {
+            if a.key.trim().len() < 20 || !a.email.contains('@') {
+                a.error = Some("Enter the full key and the email you used to buy it.".into());
+            } else {
+                a.busy = true;
+                a.error = None;
+                let (key, email) = (a.key.clone(), a.email.clone());
+                self.license_job(ctx, move |l| LicenseEvent::Activated(l.activate(&key, &email)));
+            }
+        }
+        if let Some(id) = remove {
+            a.busy = true;
+            let (key, email) = (a.key.clone(), a.email.clone());
+            self.license_job(ctx, move |l| LicenseEvent::DeviceRemoved(l.remove_device(&key, &email, &id)));
+        }
+        if !close {
+            self.activation = Some(a);
         }
     }
 
@@ -418,6 +613,34 @@ impl App {
                 self.save_config();
                 let level = if top { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal };
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
+            }
+            ui.add_space(6.0);
+            ui.label(overline("License", p.faint));
+            match self.license.payload().filter(|_| self.license.is_pro()) {
+                Some(lic) => {
+                    ui.label(RichText::new(format!("{} · {}", lic.plan_name, lic.email_hint)).small().color(p.text));
+                    if ui.link(RichText::new("Manage devices ↗").small()).clicked() {
+                        open_url(crate::license::MANAGE_URL);
+                    }
+                    if ui.link(RichText::new("Remove Pro from this PC").small()).on_hover_text("Frees this PC's seat so you can use the key on another PC").clicked() {
+                        self.license_job(ui.ctx(), |l| LicenseEvent::Deactivated(l.deactivate()));
+                        ui.close();
+                    }
+                }
+                None => {
+                    if let LicenseState::Invalid { reason, .. } = &self.license {
+                        let why = match reason {
+                            crate::license::Invalid::Expired => "Pro needs to go online once to renew.",
+                            crate::license::Invalid::VersionNotCovered => "Your key doesn't cover this version.",
+                            _ => "The license on this PC isn't valid here.",
+                        };
+                        ui.label(RichText::new(why).small().color(p.muted));
+                    }
+                    if ui.link(RichText::new("Enter license key…").small()).clicked() {
+                        self.activation = Some(Activation::default());
+                        ui.close();
+                    }
+                }
             }
             ui.add_space(6.0);
             ui.label(overline("Appearance", p.faint));
@@ -807,8 +1030,13 @@ impl App {
                 self.restore_all();
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if tier != Tier::Pro && primary_button(ui, &format!("Unlock Pro · {PRICE}")).on_hover_text("One-time payment. Opens your browser.").clicked() {
-                    open_url(crate::license::BUY_URL);
+                if tier != Tier::Pro {
+                    if primary_button(ui, &format!("Unlock Pro · {PRICE}")).on_hover_text("One-time payment on leanfps.com. Opens your browser.").clicked() {
+                        open_url(crate::license::BUY_URL);
+                    }
+                    if ghost_button(ui, "Enter key").on_hover_text("Already bought Pro? Activate it on this PC.").clicked() {
+                        self.activation = Some(Activation::default());
+                    }
                 }
             });
         });
@@ -850,6 +1078,7 @@ impl eframe::App for App {
     /// Runs even while the window is hidden in the tray.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         use crate::tray::TrayEvent;
+        self.license_events(ctx);
         while let Ok(ev) = self.tray_rx.try_recv() {
             match ev {
                 TrayEvent::Open => {
@@ -937,6 +1166,7 @@ impl eframe::App for App {
                 self.footer(ui, tier);
             });
         });
+        self.activation_dialog(ui.ctx());
         self.toast(ui.ctx());
 
         if has_session {

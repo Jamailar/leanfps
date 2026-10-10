@@ -142,9 +142,10 @@
 ## 9. 后端（共享网关，荷兰节点）
 
 - 网关 APP `leanfps`（荷兰节点）、一次性商品 $19（USD）、Google 登录、`no-reply@leanfps.com`、`contact@` 收件箱。
-- 桌面登录复用网关现有的 CLI 浏览器授权（`POST /auth/cli/requests` → 浏览器批准 → `POST /auth/cli/token`）。**缺口**：目前 `approve` 需要管理员角色（`routes.generated.md`，`cli-authorization.controller.ts:57`）。需要给网关提 PR：允许按 APP 配置让普通用户批准自己的请求（或在 `leanfps` 站点模块里加一个用户批准接口）。实现前先读网关源码确认。
-- **缺口**：离线许可。站点模块提供 `GET /{app}/v1/leanfps/license`：校验权益与设备数，返回 Ed25519 签名的许可（用户、设备、到期 30 天），公钥编进 exe，软件离线校验。
-- 付款后权益：一次性商品 + 权益（实现前确认网关权益包能否表达「永久 Pro」，不行就在站点模块里按已付订单判断）。
+- **2026-10-10 改为买断授权码**（网关已有 `licenses` 模块和 `desktop-license-sdk`，像 Eagle 一样）：不需要账号和登录。买家在 leanfps.com 填邮箱付款（`POST /licenses/checkout`，Stripe），授权码发到邮箱；软件里「Enter key」输入授权码 + 购买邮箱 → `POST /licenses/activate` → Ed25519 签名的授权文件存为数据目录里的 `license.json`，启动时离线验签（公钥编进 exe，`src/license.rs` 的 `PUBLIC_KEYS`）。
+- 方案 Pro：$19 一次性，3 台电脑，所有版本（`max_major` 为空），离线宽限 30 天（每 7 天后台续签一次，断网照常用到 30 天）。换电脑：旧电脑「Remove Pro from this PC」，或在 leanfps.com/license 用邮件链接移除设备；激活时设备已满会直接列出设备供移除。
+- 联网只用 Windows 自带的 WinHTTP（`platform/win.rs` 的 `https_post_json`），不往 exe 里打包 TLS 库。服务器明确拒绝（退款、作废、设备被移除）才删除 `license.json`；网络问题一律保留。Pro 失效时按原有流程撤销 Pro 优化项（先记录后修改的日志不变）。
+- 原计划的「CLI 浏览器授权 + 站点模块签名许可」不再需要。
 
 ## 10. 工程与发布
 
@@ -209,7 +210,7 @@
 | M2 游戏识别 | 完成：前台窗口检测、内置 60 款游戏库、Steam/Epic 库扫描、图标提取、类型专项、游戏退出自动还原、崩溃后恢复；游戏 exe 名需实机核对 |
 | M3 小窗口 | 基本完成：380×640 窗口、游戏卡片（图标/类型/专项）、预设、逐项开关与详情、一键优化、恢复全部；Linux 模拟环境截图验证。未做：托盘、开机自启 |
 | M4 测量 | 未开始 |
-| M5 许可与官网 | 未开始；「解锁 Pro」按钮目前打开 `leanfps.com/pro`（域名未买） |
+| M5 许可与官网 | 进行中（2026-10-10）：软件端授权码激活、离线验签、续签、注销本机完成（`src/license.rs`，单元测试用网关同款签名的样本）；官网 leanfps.com 已上线，结账与授权页在 `Jamailar/Sites`；网关 APP 与公钥待建 |
 | M6 内测与发布 | CI：Windows 虚拟机上单元测试、发布构建、体积预算（8 MB）、`--selftest` 真实应用/撤销 |
 
 当前体积：交叉编译的 `leanfps.exe` 6.3 MB（windows-gnu，未压缩）。

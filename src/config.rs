@@ -20,8 +20,10 @@ pub struct Config {
     pub not_games: HashSet<String>,
     /// Game sessions started so far; the first few get every Pro feature.
     pub sessions_played: u32,
-    /// Signed license from the LeanFPS account service (verified in `license`).
-    pub license: Option<String>,
+    /// A verified Pro license is on this PC (`license.json`, checked in `license`). Never
+    /// saved: it is worked out again from the signed file on every start.
+    #[serde(skip)]
+    pub pro: bool,
     pub first_run_done: bool,
     pub always_on_top: bool,
     /// Closing the window keeps LeanFPS running in the tray.
@@ -40,7 +42,7 @@ impl Default for Config {
             confirmed_games: HashSet::new(),
             not_games: HashSet::new(),
             sessions_played: 0,
-            license: None,
+            pro: false,
             first_run_done: false,
             always_on_top: false,
             close_to_tray: true,
@@ -84,7 +86,7 @@ impl Config {
     }
 
     pub fn tier(&self) -> Tier {
-        if crate::license::is_pro(self.license.as_deref()) {
+        if self.pro {
             Tier::Pro
         } else if self.sessions_played < TRIAL_SESSIONS {
             Tier::Trial { left: TRIAL_SESSIONS - self.sessions_played }
@@ -121,6 +123,11 @@ mod tests {
         assert_eq!(c.tier(), Tier::Free);
         assert!(!c.active(hags), "pro tweak inactive on free tier");
         assert!(c.active(dvr));
+        c.pro = true;
+        assert_eq!(c.tier(), Tier::Pro);
+        assert!(c.active(hags));
+        let saved = serde_json::to_string(&c).unwrap();
+        assert!(!serde_json::from_str::<Config>(&saved).unwrap().pro, "Pro is never read from the settings file");
         c.set_preset("competitive");
         assert!(!c.is_custom());
     }
