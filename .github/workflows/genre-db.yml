@@ -1,7 +1,7 @@
 name: genre-db
 
 # Rebuilds data/steam_genres.tsv from SteamSpy tag votes. Slow (SteamSpy allows 1 request per
-# second), so it only runs when asked or when the tools change. The result is committed to the
+# second, about 90 minutes), so it only runs when started by hand. The result is committed to the
 # branch the run started from (and kept as an artifact).
 on:
   workflow_dispatch:
@@ -9,11 +9,6 @@ on:
       pages:
         description: "SteamSpy pages (1000 most-owned apps each)"
         default: "4"
-  push:
-    paths:
-      - .github/workflows/genre-db.yml
-      - tools/fetch_steamspy.py
-      - tools/build_genre_db.py
 
 permissions:
   contents: write
