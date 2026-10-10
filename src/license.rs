@@ -1,7 +1,6 @@
 //! LeanFPS Pro license: a key bought on leanfps.com, activated once, then checked offline.
 //!
-//! The shared gateway's desktop license service (`desktop-license-sdk` in ArtiSalesBackend)
-//! issues an Ed25519-signed license file bound to this PC. The file is kept as
+//! The license server issues an Ed25519-signed license file bound to this PC. The file is kept as
 //! `license.json` in LeanFPS's data folder and verified on every start with the public keys
 //! compiled in below, so no network is needed to use Pro. Every few days the file is
 //! refreshed in the background; network trouble keeps the current file until it expires,
@@ -12,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Gateway API for the `leanfps` app on the Netherlands node.
+/// License server API for the `leanfps` app.
 pub const API_BASE: &str = "https://api.hyperchaos.dev/leanfps/v1";
 pub const APP_SLUG: &str = "leanfps";
 /// Where the "Unlock Pro" button sends the user.
