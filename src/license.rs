@@ -23,7 +23,7 @@ pub const FILE: &str = "license.json";
 
 /// Signing keys of the `leanfps` app (`GET /licenses/public-keys`): kid -> base64url raw
 /// Ed25519 public key. Keep every key that ever signed a file; add new ones on rotation.
-pub const PUBLIC_KEYS: &[(&str, &str)] = &[];
+pub const PUBLIC_KEYS: &[(&str, &str)] = &[("lic-20261010-418e4c", "02oWehuvWg6dDEuOcV02ijClNkTHlWo5BW35liEdFEE")];
 
 const SIGNATURE_DOMAIN: &str = "artisales.app-license.v1\n";
 
