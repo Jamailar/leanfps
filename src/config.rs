@@ -27,6 +27,8 @@ pub struct Config {
     /// Closing the window keeps LeanFPS running in the tray.
     pub close_to_tray: bool,
     pub start_with_windows: bool,
+    /// "system", "light" or "dark".
+    pub theme: String,
 }
 
 impl Default for Config {
@@ -43,6 +45,7 @@ impl Default for Config {
             always_on_top: false,
             close_to_tray: true,
             start_with_windows: false,
+            theme: "system".into(),
         }
     }
 }

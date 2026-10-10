@@ -208,7 +208,8 @@ fn start_capture(pid: u32) -> Option<Capture> {
 }
 #[cfg(not(windows))]
 fn start_capture(_pid: u32) -> Option<Capture> {
-    None
+    // UI work off Windows: LEANFPS_DEMO_FPS=1 shows made-up frame numbers.
+    std::env::var_os("LEANFPS_DEMO_FPS").map(|_| ())
 }
 
 #[cfg(windows)]
@@ -218,7 +219,7 @@ fn capture_fps(c: &Capture) -> Fps {
 }
 #[cfg(not(windows))]
 fn capture_fps(_c: &Capture) -> Fps {
-    Fps::default()
+    Fps { live: 241.0, avg: 236.0, low1: 168.0, frames: 4000 }
 }
 
 impl Watcher {
