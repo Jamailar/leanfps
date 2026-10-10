@@ -1205,7 +1205,7 @@ dependencies = [
 
 [[package]]
 name = "leanfps"
-version = "0.1.0"
+version = "0.1.146"
 dependencies = [
  "ed25519-dalek",
  "eframe",
