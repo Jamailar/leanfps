@@ -149,7 +149,7 @@
 
 ## 10. 工程与发布
 
-- 构建：GitHub Actions `windows-latest`，`cargo build --release`（`lto = "fat"`、`codegen-units = 1`、`panic = "abort"`、`strip = true`）；CI 里**卡体积**：exe > 8 MB 失败（硬上限 20 MB）。
+- 构建：GitHub Actions `windows-latest`，`cargo build --release`（`lto = "fat"`、`codegen-units = 1`、`panic = "abort"`、`strip = true`）；CI 里**卡体积**：exe > 12 MB 失败（硬上限 20 MB；8 MB 时没有 Direct3D 12 后备渲染器，没有 OpenGL 的电脑打不开窗口）。
 - **自动化测试**：GitHub 的 Windows 虚拟机有管理员权限，可以对每一项优化跑「读原值 → 应用 → 校验 → 撤销 → 校验与原值一致」。真实游戏与显卡的测试需要实机。
 - 性能预算（CI 或发布前测量）：冷启动 < 300 ms；窗口模式内存 < 60 MB；托盘守护 < 10 MB、CPU 平均 < 0.1%。
 - 签名：见第 12 节。
@@ -211,6 +211,6 @@
 | M3 小窗口 | 基本完成：380×640 窗口、游戏卡片（图标/类型/专项）、预设、逐项开关与详情、一键优化、恢复全部；Linux 模拟环境截图验证。未做：托盘、开机自启 |
 | M4 测量 | 未开始 |
 | M5 许可与官网 | 进行中（2026-10-10）：软件端授权码激活、离线验签、续签、注销本机完成（`src/license.rs`，单元测试用网关同款签名的样本）；官网 leanfps.com 已上线，结账与授权页在 `Jamailar/Sites`；网关 APP 与公钥待建 |
-| M6 内测与发布 | CI：Windows 虚拟机上单元测试、发布构建、体积预算（8 MB）、`--selftest` 真实应用/撤销 |
+| M6 内测与发布 | CI：Windows 虚拟机上单元测试、发布构建、体积预算（12 MB）、`--selftest` 真实应用/撤销 |
 
 当前体积：交叉编译的 `leanfps.exe` 6.3 MB（windows-gnu，未压缩）。

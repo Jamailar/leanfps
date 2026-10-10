@@ -87,6 +87,15 @@ Data goes to `%ProgramData%\LeanFPS` (override with `LEANFPS_DATA_DIR`).
    and process priority). The exe is not code-signed yet, so SmartScreen may show
    "Windows protected your PC": choose *More info* > *Run anyway*.
 
+Or install it: CI also builds `LeanFPS-Setup-<version>.exe` from `installer/leanfps.iss`
+(Inno Setup). It installs to Program Files, adds a Start menu entry and a desktop shortcut,
+and its uninstaller runs `--restore-all` before removing the program.
+
+If the window does not open, LeanFPS shows the reason and writes it to
+`C:\ProgramData\LeanFPS\leanfps.log`. It draws with OpenGL and falls back to Direct3D 12
+(GPU or Windows' software renderer) on PCs without a usable OpenGL driver, such as virtual
+machines.
+
 Undo everything at any time with the **Restore all** button or `leanfps.exe --restore-all`.
 Settings and the undo journal are in `C:\ProgramData\LeanFPS`. Do not run `--selftest` on your
 own PC: it is meant for throwaway test machines and refuses to run unless `CI=true` or
@@ -101,7 +110,7 @@ leanfps --selftest      apply, verify and undo every tweak; writes leanfps-selft
 ```
 
 `--selftest` changes real system settings. Run it only on a throwaway machine; CI runs it on
-the GitHub Windows runner (`.github/workflows/ci.yml`), which also enforces an 8 MB
+the GitHub Windows runner (`.github/workflows/ci.yml`), which also enforces a 12 MB
 size budget.
 
 ## Game database

@@ -24,6 +24,10 @@ sha2 = { version = "0.10", default-features = false }
 eframe = { version = "0.36", default-features = false, features = ["x11"] }
 
 [target.'cfg(windows)'.dependencies]
+# Fallback renderer for PCs without a usable OpenGL driver (virtual machines, some ARM laptops,
+# Remote Desktop): Direct3D 12 only, which can also run on the WARP software rasterizer.
+eframe = { version = "0.36", default-features = false, features = ["glow", "default_fonts", "wgpu_no_default_features"] }
+wgpu = { version = "30", default-features = false, features = ["std", "dx12", "wgsl"] }
 windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Graphics_Direct3D",

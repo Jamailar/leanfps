@@ -30,6 +30,18 @@ fn main() {
     if !args.is_empty() {
         attach_console();
     }
+    // A windowed release build has no console, so a panic or a failed window would vanish
+    // without a trace. Keep a short log in the data folder and tell the user where it is.
+    let windowed = matches!(args.first().map(String::as_str), None | Some("--tray"));
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = format!("crashed: {info}");
+        log_line(&msg);
+        eprintln!("{msg}");
+        if windowed {
+            fatal_box(&msg);
+        }
+    }));
+    log_line(&format!("LeanFPS {} started {:?}", env!("CARGO_PKG_VERSION"), args));
     match args.first().map(String::as_str) {
         None => run_window(false),
         Some("--tray") => run_window(true),
@@ -72,9 +84,8 @@ fn restore_all() -> i32 {
 fn run_window(hidden: bool) {
     #[cfg(windows)]
     if !platform::win::single_instance() {
-        if !tray::wake_existing() {
-            platform::win::focus_existing_window();
-        }
+        let woke = tray::wake_existing() || platform::win::focus_existing_window();
+        log_line(&format!("already running; asked it to show its window: {woke}"));
         return;
     }
     let pf: Arc<dyn platform::Platform> = Arc::from(platform::native());
@@ -114,12 +125,24 @@ fn run_window(hidden: bool) {
     if always_on_top {
         viewport = viewport.with_window_level(eframe::egui::WindowLevel::AlwaysOnTop);
     }
-    let options = eframe::NativeOptions { viewport, ..Default::default() };
-
-    let result = eframe::run_native(
-        "LeanFPS",
-        options,
+    // Moved into the app by whichever renderer gets as far as creating it.
+    let once = Arc::new(Mutex::new(Some((engine, rx, tx))));
+    let make_app = move || -> eframe::AppCreator<'static> {
+        let (pf, catalog, config, shared, store, per_game, once, watcher_slot, licenses) = (
+            pf.clone(),
+            catalog.clone(),
+            config.clone(),
+            shared.clone(),
+            store.clone(),
+            per_game.clone(),
+            once.clone(),
+            watcher_slot.clone(),
+            licenses.clone(),
+        );
         Box::new(move |cc| {
+            let Some((engine, rx, tx)) = once.lock().unwrap().take() else {
+                return Err("the window was already created once".into());
+            };
             let ctx = cc.egui_ctx.clone();
             let w = watcher::Watcher {
                 pf: pf.clone(),
@@ -147,15 +170,58 @@ fn run_window(hidden: bool) {
             let h = std::thread::Builder::new().name("watcher".into()).spawn(move || w.run(rx)).expect("start watcher");
             *watcher_slot.lock().unwrap() = Some(h);
             Ok(Box::new(ui::App::new(cc, engine, games::GameDb::builtin(), config, shared, store, per_game, tx, licenses)))
-        }),
-    );
+        })
+    };
+
+    // OpenGL first: smallest memory use. Some PCs have no usable OpenGL driver (virtual
+    // machines, some ARM laptops, Remote Desktop, a missing graphics driver); there Direct3D 12
+    // still works, on the GPU or on Windows' software rasterizer.
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut result = eframe::run_native("LeanFPS", eframe::NativeOptions { viewport: viewport.clone(), renderer: eframe::Renderer::Glow, ..Default::default() }, make_app());
+    #[cfg(windows)]
+    if let Err(e) = &result {
+        log_line(&format!("OpenGL window failed ({e}); trying Direct3D 12"));
+        let options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, ..Default::default() };
+        result = eframe::run_native("LeanFPS", options, make_app());
+    }
     if let Err(e) = result {
-        eprintln!("LeanFPS could not open its window: {e}");
+        let msg = format!("LeanFPS could not open its window: {e}");
+        log_line(&msg);
+        eprintln!("{msg}");
+        fatal_box(&msg);
     }
     let handle = watcher_thread.lock().unwrap().take();
     if let Some(h) = handle {
         let _ = h.join();
     }
+}
+
+/// Append one line to `leanfps.log` in the data folder (best effort, never fails).
+fn log_line(msg: &str) {
+    use std::io::Write;
+    let path = store::Store::default_location().path("leanfps.log");
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // Keep the log small: start over once it passes 256 KB.
+    if std::fs::metadata(&path).map(|m| m.len() > 256 * 1024).unwrap_or(false) {
+        let _ = std::fs::remove_file(&path);
+    }
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "[{secs}] {msg}");
+    }
+}
+
+/// Show a startup failure to the user instead of exiting silently.
+fn fatal_box(msg: &str) {
+    #[cfg(windows)]
+    {
+        let log = store::Store::default_location().path("leanfps.log");
+        platform::win::message_box("LeanFPS", &format!("{msg}\n\nDetails are in {}", log.display()));
+    }
+    #[cfg(not(windows))]
+    let _ = msg;
 }
 
 fn attach_console() {
