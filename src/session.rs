@@ -1,10 +1,11 @@
 //! A game session: session tweaks applied when a game starts and reverted when it exits.
-//! Priors are saved to `session.json` as they are applied, so a crash or power cut is
-//! repaired on the next start ([`recover`]).
+//! Each prior is saved to `session.json` before its change runs (record first, then modify),
+//! so a crash or power cut is repaired on the next start ([`recover`]). Anything that could
+//! not be restored stays in the file and is retried.
 
 use crate::catalog::{Action, Catalog, Scope};
 use crate::config::Config;
-use crate::engine::{apply_action, revert_prior, Entry, GameCtx};
+use crate::engine::{apply_action_recorded, revert_prior, undo_failed, Entry, GameCtx, Prior};
 use crate::pergame::PerGame;
 use crate::catalog::Priority;
 use crate::games::GameInfo;
@@ -43,7 +44,8 @@ impl Session {
             pid,
             started: Instant::now(),
             applied: Vec::new(),
-            priors: Vec::new(),
+            // Leftovers a previous recover could not restore: keep them so they are retried.
+            priors: store.load(SESSION_FILE).unwrap_or_default(),
             purge_below_mb: None,
             last_purge: None,
             purges: 0,
@@ -65,23 +67,37 @@ impl Session {
                     if per_game.has(&t.id, &exe) {
                         continue;
                     }
-                    match apply_action(pf, a, Some(ctx)) {
-                        Ok(prior) => {
-                            per_game.record(&t.id, &exe, prior);
-                            note = Some("Takes effect the next time the game starts".to_string());
-                        }
+                    let mut record = |p: &Prior| per_game.record(&t.id, &exe, p.clone());
+                    match apply_action_recorded(pf, a, Some(ctx), &mut record) {
+                        Ok(_) => note = Some("Takes effect the next time the game starts".to_string()),
                         Err(e) => {
+                            per_game.forget_failed(pf, &t.id, &exe);
                             result = Err(e);
                             break;
                         }
                     }
                     continue;
                 }
-                match apply_action(pf, a, Some(ctx)) {
-                    Ok(prior) => {
-                        s.priors.push(Entry { tweak: t.id.clone(), prior });
+                let before = s.priors.len();
+                let priors = &mut s.priors;
+                let mut record = |p: &Prior| {
+                    priors.push(Entry { tweak: t.id.clone(), prior: p.clone() });
+                    let r = store.save(SESSION_FILE, &*priors);
+                    if r.is_err() {
+                        priors.pop();
+                    }
+                    r
+                };
+                let outcome = apply_action_recorded(pf, a, Some(ctx), &mut record);
+                if outcome.is_err() && s.priors.len() > before {
+                    // Recorded but the change failed: undo whatever part of it happened.
+                    if undo_failed(pf, &s.priors[before].prior) {
+                        s.priors.truncate(before);
                         let _ = store.save(SESSION_FILE, &s.priors);
                     }
+                }
+                match outcome {
+                    Ok(_) => {}
                     // Anti-cheat protected games refuse priority changes while running; Windows
                     // can still apply a launch priority to them.
                     Err(e) if matches!(a, Action::GamePriority { class } if *class >= Priority::AboveNormal) => {
@@ -124,22 +140,34 @@ impl Session {
 
     /// Revert everything, newest first. Returns errors (already logged nowhere else).
     pub fn end(self, pf: &dyn Platform, store: &Store) -> Vec<String> {
-        let errs = revert_all(pf, &self.priors);
-        store.remove(SESSION_FILE);
-        errs
+        revert_and_keep_failures(pf, store, self.priors)
     }
 }
 
-fn revert_all(pf: &dyn Platform, priors: &[Entry]) -> Vec<String> {
-    priors.iter().rev().filter_map(|e| revert_prior(pf, &e.prior).err().map(|err| format!("{}: {err}", e.tweak))).collect()
+/// Revert `priors` newest first. What could not be restored stays in `session.json` so the
+/// next start (or Restore all) retries it instead of forgetting the user's original value.
+fn revert_and_keep_failures(pf: &dyn Platform, store: &Store, priors: Vec<Entry>) -> Vec<String> {
+    let mut errs = Vec::new();
+    let mut left = Vec::new();
+    for e in priors.into_iter().rev() {
+        if let Err(err) = revert_prior(pf, &e.prior) {
+            errs.push(format!("{}: {err}", e.tweak));
+            left.push(e);
+        }
+    }
+    if left.is_empty() {
+        store.remove(SESSION_FILE);
+    } else {
+        left.reverse();
+        let _ = store.save(SESSION_FILE, &left);
+    }
+    errs
 }
 
 /// Undo a session left behind by a crash. Safe to call when there is none.
 pub fn recover(pf: &dyn Platform, store: &Store) -> Vec<String> {
     let Some(priors) = store.load::<Vec<Entry>>(SESSION_FILE) else { return Vec::new() };
-    let errs = revert_all(pf, &priors);
-    store.remove(SESSION_FILE);
-    errs
+    revert_and_keep_failures(pf, store, priors)
 }
 
 #[cfg(test)]
@@ -273,5 +301,35 @@ mod tests {
         s.tick(&pf);
         assert_eq!(s.purges, 1, "cooldown between purges");
         s.end(&pf, &store);
+    }
+
+    #[test]
+    fn no_session_change_without_saved_undo_info() {
+        let (pf, cat, cfg, _) = setup();
+        let blocker = std::env::temp_dir().join(format!("leanfps-blocker-session-{}", std::process::id()));
+        std::fs::write(&blocker, b"x").unwrap();
+        let store = Store::new(blocker.join("data"));
+        let s = Session::start(&pf, &cat, &cfg, &store, &mut PerGame::load(&store), game(Some(Genre::Shooter)), 2);
+        assert!(s.applied.iter().all(|a| a.result.is_err()), "{:?}", s.applied);
+        pf.with(|st| {
+            assert!(st.procs.iter().all(|p| p.1 == Priority::Normal));
+            assert_eq!(st.mouse, [6, 10, 1]);
+            assert!(!st.keep_awake);
+        });
+    }
+
+    #[test]
+    fn failed_restore_is_kept_and_retried() {
+        let (pf, cat, cfg, store) = setup();
+        pf.with(|st| st.machine.laptop = true);
+        let s = Session::start(&pf, &cat, &cfg, &store, &mut PerGame::load(&store), game(Some(Genre::Shooter)), 2);
+        pf.with(|st| st.fail.push("set_power_overlay".into()));
+        let errs = s.end(&pf, &store);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(store.path("session.json").exists(), "unrestored power mode must not be forgotten");
+        pf.with(|st| st.fail.clear());
+        assert!(recover(&pf, &store).is_empty());
+        assert_eq!(pf.power_overlay().unwrap(), "00000000-0000-0000-0000-000000000000");
+        assert!(!store.path("session.json").exists());
     }
 }

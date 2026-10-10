@@ -138,13 +138,16 @@ impl Platform for WinPlatform {
         win(unsafe { RegQueryValueExW(hk.0, &name_w, None, Some(&mut ty), Some(buf.as_mut_ptr()), Some(&mut size)) }, "read registry value")?;
         buf.truncate(size as usize);
         Ok(match ty {
-            REG_DWORD if buf.len() >= 4 => Some(RegData::Dword(u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]))),
+            REG_DWORD if buf.len() == 4 => Some(RegData::Dword(u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]))),
             REG_SZ => {
                 let wide: Vec<u16> = buf.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-                Some(RegData::Sz(String::from_utf16_lossy(&wide).trim_end_matches('\0').to_string()))
+                let text = String::from_utf16_lossy(&wide).trim_end_matches('\0').to_string();
+                // Only use the text form when writing it back gives the same bytes.
+                let same = text.encode_utf16().chain([0]).flat_map(|u| u.to_le_bytes()).eq(buf.iter().copied());
+                Some(if same { RegData::Sz(text) } else { RegData::Raw { ty: ty.0, data: buf } })
             }
-            // A value of another type is "not our value"; treat it as different but present.
-            _ => Some(RegData::Sz(format!("<type {}>", ty.0))),
+            // Any other type is kept as raw bytes so undo restores it exactly.
+            _ => Some(RegData::Raw { ty: ty.0, data: buf }),
         })
     }
 
@@ -159,6 +162,7 @@ impl Platform for WinPlatform {
         let (ty, data): (REG_VALUE_TYPE, Vec<u8>) = match value {
             RegData::Dword(v) => (REG_DWORD, v.to_le_bytes().to_vec()),
             RegData::Sz(s) => (REG_SZ, s.encode_utf16().chain([0]).flat_map(|u| u.to_le_bytes()).collect()),
+            RegData::Raw { ty, data } => (REG_VALUE_TYPE(*ty), data.clone()),
         };
         win(unsafe { RegSetValueExW(hk.0, &HSTRING::from(name), None, ty, Some(&data)) }, "write registry value")
     }
@@ -551,7 +555,9 @@ pub fn set_autostart(on: bool) -> PResult<()> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let mut cmd = std::process::Command::new("schtasks");
+    // Full path, so a schtasks.exe next to leanfps.exe (e.g. in Downloads) is never run.
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
+    let mut cmd = std::process::Command::new(std::path::Path::new(&system_root).join("System32").join("schtasks.exe"));
     if on {
         let tr = format!("\"{}\" --tray", exe.display());
         cmd.args(["/Create", "/F", "/TN", "LeanFPS", "/SC", "ONLOGON", "/RL", "HIGHEST", "/TR", &tr]);

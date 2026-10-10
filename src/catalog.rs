@@ -122,6 +122,9 @@ impl Priority {
 pub enum RegData {
     Dword(u32),
     Sz(String),
+    /// Any other registry type (QWORD, binary, expandable or multi string), kept byte for
+    /// byte so restoring it puts back exactly what was there.
+    Raw { ty: u32, data: Vec<u8> },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -243,6 +246,13 @@ pub struct Catalog {
     pub tweak: Vec<Tweak>,
 }
 
+/// Processes whose priority LeanFPS must never lower: slowing them can freeze input, sound
+/// or the desktop.
+pub const PROTECTED_PROCESSES: [&str; 14] = [
+    "system", "smss.exe", "csrss.exe", "wininit.exe", "winlogon.exe", "services.exe", "lsass.exe", "svchost.exe", "dwm.exe",
+    "explorer.exe", "audiodg.exe", "fontdrvhost.exe", "ctfmon.exe", "leanfps.exe",
+];
+
 pub const BUILTIN_TWEAKS: &str = include_str!("../data/tweaks.toml");
 
 impl Catalog {
@@ -276,6 +286,17 @@ impl Catalog {
             for a in &t.actions {
                 if a.is_session_only() && t.scope != Scope::Session {
                     return Err(format!("tweak {}: action {a:?} needs session scope", t.id));
+                }
+                if let Action::BackgroundPriority { processes, .. } = a {
+                    if let Some(p) = processes.iter().find(|p| PROTECTED_PROCESSES.contains(&p.to_ascii_lowercase().as_str())) {
+                        return Err(format!("tweak {}: {p} is a Windows process and must never be slowed down", t.id));
+                    }
+                }
+                if let Action::Registry { key, name, .. } = a {
+                    let k = key.to_ascii_lowercase();
+                    if k.contains("image file execution options") || name.eq_ignore_ascii_case("Debugger") {
+                        return Err(format!("tweak {}: Image File Execution Options is only for launch priority, set in code", t.id));
+                    }
                 }
                 if let Action::Registry { key, .. } = a {
                     if !(key.starts_with("HKCU\\") || key.starts_with("HKLM\\")) {
@@ -321,6 +342,25 @@ scope = "persistent"
 risk = "low"
 genres = ["shooter"]
 actions = [{ type = "keep_awake" }]
+"#;
+        assert!(Catalog::parse(src).is_err());
+    }
+
+    #[test]
+    fn rejects_lowering_windows_processes() {
+        let src = r#"
+[[preset]]
+id = "recommended"
+title = "R"
+summary = "R"
+[[tweak]]
+id = "x"
+title = "x"
+summary = "x"
+detail = "x"
+scope = "session"
+risk = "low"
+actions = [{ type = "background_priority", class = "below_normal", processes = ["chrome.exe", "Svchost.exe"] }]
 "#;
         assert!(Catalog::parse(src).is_err());
     }

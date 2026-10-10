@@ -1,7 +1,7 @@
 //! Applies and reverts tweaks. Before every change the real previous value is read and
 //! stored in a journal, so revert restores what the user had, not a hard-coded default.
 
-use crate::catalog::{Action, Catalog, Form, Priority, RegData, Scope, Tweak};
+use crate::catalog::{Action, Catalog, Form, Priority, RegData, Scope, Tweak, PROTECTED_PROCESSES};
 use crate::platform::{file_name_lower, PResult, Platform};
 use crate::store::Store;
 use serde::{Deserialize, Serialize};
@@ -29,6 +29,8 @@ pub struct GameCtx<'a> {
     pub pid: u32,
     pub exe_path: &'a str,
 }
+
+const JOURNAL_FILE: &str = "journal.json";
 
 pub const GPU_PREFS_KEY: &str = "HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences";
 
@@ -91,62 +93,73 @@ const MOUSE_ACCEL_ON: [i32; 3] = [6, 10, 1];
 const MOUSE_ACCEL_OFF: [i32; 3] = [0, 0, 0];
 
 /// Run one action and return what it replaced. `game` is required for session actions.
-pub fn apply_action(pf: &dyn Platform, action: &Action, game: Option<GameCtx>) -> PResult<Prior> {
+///
+/// Record first, then modify: reads what is there now, hands it to `record` (which must
+/// persist it), and only changes the system once `record` succeeded. If `record` fails nothing
+/// is touched. If the change itself fails, the prior stays recorded and the caller undoes it
+/// with [`undo_failed`], so a half-done change is never left without its undo data.
+pub fn apply_action_recorded(
+    pf: &dyn Platform,
+    action: &Action,
+    game: Option<GameCtx>,
+    record: &mut dyn FnMut(&Prior) -> PResult<()>,
+) -> PResult<Prior> {
+    let prior = capture_prior(pf, action, game)?;
+    record(&prior).map_err(|e| format!("could not save undo information, nothing was changed: {e}"))?;
+    perform(pf, action, game, &prior)?;
+    Ok(prior)
+}
+
+/// Undo a recorded prior whose action failed part-way. Returns true when nothing is left to
+/// restore, so the record can be dropped. Process-level changes die with the process, so a
+/// failure there never leaves anything behind.
+pub fn undo_failed(pf: &dyn Platform, prior: &Prior) -> bool {
+    revert_prior(pf, prior).is_ok() || prior.is_process_scoped()
+}
+
+impl Prior {
+    /// Lives only as long as one process (priority, throttling, keep-awake).
+    pub fn is_process_scoped(&self) -> bool {
+        matches!(self, Prior::Priority { .. } | Prior::PriorityMany { .. } | Prior::Throttling { .. } | Prior::KeepAwake | Prior::Nothing)
+    }
+}
+
+/// Read the current state an action would replace. Changes nothing.
+pub fn capture_prior(pf: &dyn Platform, action: &Action, game: Option<GameCtx>) -> PResult<Prior> {
     let need_game = || game.ok_or_else(|| "this change only works while a game is running".to_string());
     let need_pid = || need_game().map(|g| g.pid);
     match action {
-        Action::Registry { key, name, value } => {
-            let before = pf.reg_get(key, name)?;
-            pf.reg_set(key, name, value)?;
-            Ok(Prior::Registry { key: key.clone(), name: name.clone(), value: before })
-        }
+        Action::Registry { key, name, .. } => Ok(Prior::Registry { key: key.clone(), name: name.clone(), value: pf.reg_get(key, name)? }),
         Action::PowerScheme { scheme } => {
             if !pf.power_scheme_exists(scheme) {
                 return Err("this power plan is not available on this PC".into());
             }
-            let before = pf.power_active_scheme()?;
-            pf.power_set_active_scheme(scheme)?;
-            Ok(Prior::PowerScheme { scheme: before })
+            Ok(Prior::PowerScheme { scheme: pf.power_active_scheme()? })
         }
-        Action::PowerSetting { subgroup, setting, ac, dc } => {
+        Action::PowerSetting { subgroup, setting, .. } => {
             let scheme = pf.power_active_scheme()?;
-            let (old_ac, old_dc) = pf.power_value(&scheme, subgroup, setting)?;
-            pf.power_set_value(&scheme, subgroup, setting, *ac, dc.unwrap_or(old_dc))?;
-            // Re-activating the scheme makes Windows pick up the new value.
-            pf.power_set_active_scheme(&scheme)?;
-            Ok(Prior::PowerSetting { scheme, subgroup: subgroup.clone(), setting: setting.clone(), ac: old_ac, dc: old_dc })
+            let (ac, dc) = pf.power_value(&scheme, subgroup, setting)?;
+            Ok(Prior::PowerSetting { scheme, subgroup: subgroup.clone(), setting: setting.clone(), ac, dc })
         }
-        Action::MouseAcceleration { enabled } => {
-            let before = pf.mouse_params()?;
-            pf.set_mouse_params(if *enabled { MOUSE_ACCEL_ON } else { MOUSE_ACCEL_OFF })?;
-            Ok(Prior::Mouse { params: before })
-        }
-        Action::GamePriority { class } => {
+        Action::MouseAcceleration { .. } => Ok(Prior::Mouse { params: pf.mouse_params()? }),
+        Action::GamePriority { .. } => {
             let pid = need_pid()?;
-            let before = pf.priority(pid)?;
-            pf.set_priority(pid, *class)?;
-            Ok(Prior::Priority { pid, class: before })
+            Ok(Prior::Priority { pid, class: pf.priority(pid)? })
         }
-        Action::GamePowerThrottlingOff => {
-            let pid = need_pid()?;
-            pf.set_power_throttling(pid, Some(false))?;
-            Ok(Prior::Throttling { pid })
-        }
-        Action::KeepAwake => {
-            pf.set_keep_awake(true)?;
-            Ok(Prior::KeepAwake)
-        }
+        Action::GamePowerThrottlingOff => Ok(Prior::Throttling { pid: need_pid()? }),
+        Action::KeepAwake => Ok(Prior::KeepAwake),
         Action::BackgroundPriority { class, processes } => {
             let game = need_pid()?;
             let names: Vec<String> = processes.iter().map(|p| p.to_ascii_lowercase()).collect();
             let mut items = Vec::new();
             for p in pf.processes()? {
-                if p.pid == game || !names.contains(&file_name_lower(&p.exe_name)) {
+                let exe = file_name_lower(&p.exe_name);
+                if p.pid == game || !names.contains(&exe) || PROTECTED_PROCESSES.contains(&exe.as_str()) {
                     continue;
                 }
-                // Skip processes we can't read or change (other users, protected). Never fatal.
+                // Skip processes we can't read (other users, protected). Never fatal.
                 if let Ok(before) = pf.priority(p.pid) {
-                    if before > *class && pf.set_priority(p.pid, *class).is_ok() {
+                    if before > *class {
                         items.push((p.pid, before));
                     }
                 }
@@ -154,22 +167,50 @@ pub fn apply_action(pf: &dyn Platform, action: &Action, game: Option<GameCtx>) -
             Ok(Prior::PriorityMany { items })
         }
         Action::StandbyPurge { .. } => Ok(Prior::Nothing),
-        Action::PowerOverlay { overlay } => {
+        Action::PowerOverlay { .. } => {
             need_game()?;
-            let before = pf.power_overlay()?;
-            pf.set_power_overlay(overlay)?;
-            Ok(Prior::Overlay { overlay: before })
+            Ok(Prior::Overlay { overlay: pf.power_overlay()? })
         }
-        Action::GpuPreference { value } => {
+        Action::GpuPreference { .. } => {
             let g = need_game()?;
-            let before = pf.reg_get(GPU_PREFS_KEY, g.exe_path)?;
-            let current = match &before {
+            Ok(Prior::Registry { key: GPU_PREFS_KEY.into(), name: g.exe_path.into(), value: pf.reg_get(GPU_PREFS_KEY, g.exe_path)? })
+        }
+    }
+}
+
+/// Make the change. `prior` is what [`capture_prior`] returned for the same action.
+fn perform(pf: &dyn Platform, action: &Action, game: Option<GameCtx>, prior: &Prior) -> PResult<()> {
+    match (action, prior) {
+        (Action::Registry { key, name, value }, _) => pf.reg_set(key, name, value),
+        (Action::PowerScheme { scheme }, _) => pf.power_set_active_scheme(scheme),
+        (Action::PowerSetting { subgroup, setting, ac, dc }, Prior::PowerSetting { scheme, dc: old_dc, .. }) => {
+            pf.power_set_value(scheme, subgroup, setting, *ac, dc.unwrap_or(*old_dc))?;
+            // Re-activating the scheme makes Windows pick up the new value.
+            pf.power_set_active_scheme(scheme)
+        }
+        (Action::MouseAcceleration { enabled }, _) => pf.set_mouse_params(if *enabled { MOUSE_ACCEL_ON } else { MOUSE_ACCEL_OFF }),
+        (Action::GamePriority { class }, Prior::Priority { pid, .. }) => pf.set_priority(*pid, *class),
+        (Action::GamePowerThrottlingOff, Prior::Throttling { pid }) => pf.set_power_throttling(*pid, Some(false)),
+        (Action::KeepAwake, _) => pf.set_keep_awake(true),
+        (Action::BackgroundPriority { class, .. }, Prior::PriorityMany { items }) => {
+            // Best effort: a process that refuses keeps its priority, and restoring it later
+            // just sets the value it already has.
+            for (pid, _) in items {
+                let _ = pf.set_priority(*pid, *class);
+            }
+            Ok(())
+        }
+        (Action::StandbyPurge { .. }, _) => Ok(()),
+        (Action::PowerOverlay { overlay }, _) => pf.set_power_overlay(overlay),
+        (Action::GpuPreference { value }, Prior::Registry { value: before, .. }) => {
+            let g = game.ok_or("this change only works while a game is running")?;
+            let current = match before {
                 Some(RegData::Sz(s)) => s.clone(),
                 _ => String::new(),
             };
-            pf.reg_set(GPU_PREFS_KEY, g.exe_path, &RegData::Sz(merge_kv(&current, "GpuPreference", &value.to_string())))?;
-            Ok(Prior::Registry { key: GPU_PREFS_KEY.into(), name: g.exe_path.into(), value: before })
+            pf.reg_set(GPU_PREFS_KEY, g.exe_path, &RegData::Sz(merge_kv(&current, "GpuPreference", &value.to_string())))
         }
+        _ => Err("internal error: undo information does not match the change".into()),
     }
 }
 
@@ -250,12 +291,12 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(catalog: Catalog, pf: Arc<dyn Platform>, store: Store) -> Engine {
-        let journal = store.load("journal.json").unwrap_or_default();
+        let journal = store.load(JOURNAL_FILE).unwrap_or_default();
         Engine { catalog, pf, journal, store }
     }
 
     fn save(&self) -> PResult<()> {
-        self.store.save("journal.json", &self.journal)
+        self.store.save(JOURNAL_FILE, &self.journal)
     }
 
     pub fn unavailable_reason(&self, t: &Tweak) -> Option<String> {
@@ -315,20 +356,41 @@ impl Engine {
             // Re-apply after an outside change: restore first so the journal keeps the user's original value.
             self.revert(id)?;
         }
-        let mut done: Vec<Prior> = Vec::new();
+        // Record first, then modify: each prior is in journal.json on disk before its change runs.
+        let pf = self.pf.clone();
+        let mut failure = None;
         for a in &t.actions {
-            match apply_action(&*self.pf, a, None) {
-                Ok(p) => done.push(p),
-                Err(e) => {
-                    for p in done.iter().rev() {
-                        let _ = revert_prior(&*self.pf, p);
-                    }
-                    return Err(e);
+            let (journal, store) = (&mut self.journal, &self.store);
+            let mut record = |p: &Prior| {
+                journal.entries.push(Entry { tweak: id.into(), prior: p.clone() });
+                let r = store.save(JOURNAL_FILE, &*journal);
+                if r.is_err() {
+                    journal.entries.pop();
                 }
+                r
+            };
+            if let Err(e) = apply_action_recorded(&*pf, a, None, &mut record) {
+                failure = Some(e);
+                break;
             }
         }
-        self.journal.entries.extend(done.into_iter().map(|prior| Entry { tweak: id.into(), prior }));
-        self.save()
+        let Some(err) = failure else { return Ok(()) };
+        // All-or-nothing: undo what this call did, newest first. Anything that can't be undone
+        // stays in the journal so Restore all can retry it.
+        let mut keep = Vec::new();
+        let mut i = self.journal.entries.len();
+        while i > 0 && self.journal.entries[i - 1].tweak == id {
+            i -= 1;
+        }
+        for e in self.journal.entries.split_off(i).into_iter().rev() {
+            if !undo_failed(&*pf, &e.prior) {
+                keep.push(e);
+            }
+        }
+        keep.reverse();
+        self.journal.entries.extend(keep);
+        let _ = self.save();
+        Err(err)
     }
 
     pub fn revert(&mut self, id: &str) -> PResult<()> {
@@ -452,5 +514,81 @@ mod tests {
         e.apply("game_dvr_off").unwrap();
         let e2 = Engine::new(Catalog::builtin(), pf.clone(), store);
         assert_eq!(e2.state("game_dvr_off"), TweakState::Applied);
+    }
+
+    /// A store whose directory can't be created: every save fails.
+    fn broken_store() -> Store {
+        let blocker = std::env::temp_dir().join(format!("leanfps-blocker-{}-{}", std::process::id(), line!()));
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        Store::new(blocker.join("data"))
+    }
+
+    #[test]
+    fn nothing_changes_when_undo_info_cannot_be_saved() {
+        let pf = Arc::new(MockPlatform::new());
+        let mut e = Engine::new(Catalog::builtin(), pf.clone(), broken_store());
+        assert!(e.apply("game_dvr_off").is_err());
+        assert!(e.apply("power_high_performance").is_err());
+        pf.with(|s| {
+            assert!(s.reg.is_empty(), "registry touched without a saved journal");
+            assert_eq!(s.active, BALANCED);
+        });
+        assert!(e.journal.entries.is_empty());
+    }
+
+    #[test]
+    fn prior_is_on_disk_before_the_change() {
+        // The first action of game_mode_on succeeds, the second fails: the journal on disk
+        // must never miss a value that was changed.
+        let (mut e, pf) = engine();
+        pf.with(|s| s.fail.push("reg_set:AllowAutoGameMode".into()));
+        assert!(e.apply("game_mode_on").is_err());
+        pf.with(|s| assert!(s.reg.is_empty(), "partial change rolled back"));
+        let on_disk: Journal = e.store.load(JOURNAL_FILE).unwrap_or_default();
+        assert!(on_disk.entries.is_empty(), "rolled-back entries removed from disk");
+    }
+
+    #[test]
+    fn other_registry_types_restore_byte_for_byte() {
+        let (mut e, pf) = engine();
+        let raw = RegData::Raw { ty: 11, data: vec![1, 2, 3, 4, 5, 6, 7, 8] };
+        pf.with(|s| s.reg.insert(("HKCU\\System\\GameConfigStore".into(), "GameDVR_Enabled".into()), raw.clone()));
+        e.apply("game_dvr_off").unwrap();
+        // Through a restart, so the journal's JSON form is used.
+        let mut e2 = Engine::new(Catalog::builtin(), pf.clone(), e.store.clone());
+        e2.revert("game_dvr_off").unwrap();
+        pf.with(|s| assert_eq!(s.reg.get(&("HKCU\\System\\GameConfigStore".into(), "GameDVR_Enabled".into())), Some(&raw)));
+    }
+
+    #[test]
+    fn corrupt_journal_is_kept_not_overwritten() {
+        let pf = Arc::new(MockPlatform::new());
+        let store = Store::temp();
+        std::fs::create_dir_all(store.path("")).unwrap();
+        std::fs::write(store.path(JOURNAL_FILE), b"{ half a jour").unwrap();
+        let mut e = Engine::new(Catalog::builtin(), pf.clone(), store.clone());
+        e.apply("game_dvr_off").unwrap();
+        let kept = std::fs::read_dir(store.path("")).unwrap().filter_map(|d| d.ok()).any(|d| {
+            d.file_name().to_string_lossy().starts_with("journal.json.corrupt-") && std::fs::read(d.path()).unwrap() == b"{ half a jour"
+        });
+        assert!(kept, "the unreadable journal must be moved aside, not lost");
+    }
+
+    #[test]
+    fn windows_processes_are_never_lowered() {
+        let pf = MockPlatform::new();
+        pf.with(|s| {
+            s.procs = vec![
+                (crate::platform::ProcInfo { pid: 1, exe_name: "dwm.exe".into() }, Priority::Normal),
+                (crate::platform::ProcInfo { pid: 2, exe_name: "chrome.exe".into() }, Priority::Normal),
+            ]
+        });
+        let a = Action::BackgroundPriority { class: Priority::BelowNormal, processes: vec!["dwm.exe".into(), "chrome.exe".into()] };
+        let ctx = GameCtx { pid: 99, exe_path: "game.exe" };
+        apply_action_recorded(&pf, &a, Some(ctx), &mut |_| Ok(())).unwrap();
+        pf.with(|s| {
+            assert_eq!(s.procs[0].1, Priority::Normal);
+            assert_eq!(s.procs[1].1, Priority::BelowNormal);
+        });
     }
 }

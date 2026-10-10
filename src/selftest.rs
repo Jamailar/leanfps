@@ -44,7 +44,18 @@ fn snapshot(pf: &dyn Platform, a: &Action) -> Snap {
     }
 }
 
+/// Only on CI or when explicitly allowed: the selftest changes real settings and keeps its
+/// undo journal in a temp folder that `--restore-all` doesn't know about.
+fn allowed() -> bool {
+    std::env::var("CI").is_ok_and(|v| v.eq_ignore_ascii_case("true")) || std::env::var("LEANFPS_SELFTEST").is_ok_and(|v| v == "1")
+}
+
 pub fn run() -> i32 {
+    if !allowed() {
+        println!("--selftest changes real system settings and is meant for throwaway test machines.");
+        println!("It only runs on CI, or with the environment variable LEANFPS_SELFTEST=1.");
+        return 2;
+    }
     let mut log = std::fs::File::create("leanfps-selftest.log").expect("create leanfps-selftest.log");
     let pf: Arc<dyn Platform> = Arc::from(crate::platform::native());
     let m = pf.machine();

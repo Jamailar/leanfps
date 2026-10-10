@@ -108,7 +108,7 @@ pub fn usual(history: &[Record], exe: &str) -> Option<(f64, f64, usize)> {
 }
 
 #[cfg(windows)]
-pub use capture::PresentCapture;
+pub use capture::{stop_leftover, PresentCapture};
 
 #[cfg(windows)]
 mod capture {
@@ -184,6 +184,11 @@ mod capture {
         unsafe {
             let _ = ControlTraceW(CONTROLTRACE_HANDLE::default(), &HSTRING::from(SESSION), buf.as_mut_ptr() as *mut _, EVENT_TRACE_CONTROL_STOP);
         }
+    }
+
+    /// Stop a frame-counter trace left running by a crash (used by Restore all).
+    pub fn stop_leftover() {
+        stop_session();
     }
 
     pub struct PresentCapture {
