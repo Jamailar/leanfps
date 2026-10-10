@@ -1,7 +1,7 @@
 //! Applies and reverts tweaks. Before every change the real previous value is read and
 //! stored in a journal, so revert restores what the user had, not a hard-coded default.
 
-use crate::catalog::{Action, Catalog, Form, Priority, RegData, Scope, Tweak, PROTECTED_PROCESSES};
+use crate::catalog::{Action, Catalog, CpuNeed, Form, Priority, RegData, Scope, Tweak, PROTECTED_PROCESSES};
 use crate::platform::{file_name_lower, PResult, Platform};
 use crate::store::Store;
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,11 @@ pub enum Prior {
     Throttling { pid: u32 },
     KeepAwake,
     Overlay { overlay: String },
+    /// The game's CPU sets before (empty = all cores).
+    CpuSets { pid: u32, ids: Vec<u32> },
+    /// One `field=value;` entry of a registry string: its old value (None = not present) and
+    /// whether the registry value existed at all.
+    RegistryField { key: String, name: String, field: String, old: Option<String>, existed: bool },
     Nothing,
 }
 
@@ -54,6 +59,34 @@ pub fn merge_kv(existing: &str, key: &str, value: &str) -> String {
         out.push_str(&format!("{key}={value};"));
     }
     out
+}
+
+/// Value of `key` inside a `a=1;b=2;` style string.
+pub fn get_kv(existing: &str, key: &str) -> Option<String> {
+    existing.split(';').map(str::trim).find_map(|p| {
+        let (k, v) = p.split_once('=')?;
+        k.trim().eq_ignore_ascii_case(key).then(|| v.trim().to_string())
+    })
+}
+
+/// Remove `key=...;` from a `a=1;b=2;` style string, keeping the other fields.
+pub fn remove_kv(existing: &str, key: &str) -> String {
+    let mut out = String::new();
+    for part in existing.split(';').map(str::trim).filter(|p| !p.is_empty()) {
+        if !part.split('=').next().unwrap_or("").trim().eq_ignore_ascii_case(key) {
+            out.push_str(part);
+            out.push(';');
+        }
+    }
+    out
+}
+
+fn reg_text(v: &Option<RegData>) -> PResult<String> {
+    match v {
+        None => Ok(String::new()),
+        Some(RegData::Sz(s)) => Ok(s.clone()),
+        Some(_) => Err("unexpected registry value type; left unchanged".into()),
+    }
 }
 
 /// IFEO launch-priority key for an exe: Windows applies `CpuPriorityClass` when it starts.
@@ -120,7 +153,10 @@ pub fn undo_failed(pf: &dyn Platform, prior: &Prior) -> bool {
 impl Prior {
     /// Lives only as long as one process (priority, throttling, keep-awake).
     pub fn is_process_scoped(&self) -> bool {
-        matches!(self, Prior::Priority { .. } | Prior::PriorityMany { .. } | Prior::Throttling { .. } | Prior::KeepAwake | Prior::Nothing)
+        matches!(
+            self,
+            Prior::Priority { .. } | Prior::PriorityMany { .. } | Prior::Throttling { .. } | Prior::KeepAwake | Prior::CpuSets { .. } | Prior::Nothing
+        )
     }
 }
 
@@ -175,6 +211,15 @@ pub fn capture_prior(pf: &dyn Platform, action: &Action, game: Option<GameCtx>) 
             let g = need_game()?;
             Ok(Prior::Registry { key: GPU_PREFS_KEY.into(), name: g.exe_path.into(), value: pf.reg_get(GPU_PREFS_KEY, g.exe_path)? })
         }
+        Action::GameCpuSets { .. } => {
+            let pid = need_pid()?;
+            Ok(Prior::CpuSets { pid, ids: pf.process_cpu_sets(pid)? })
+        }
+        Action::RegistryField { key, name, field, .. } => {
+            let v = pf.reg_get(key, name)?;
+            let text = reg_text(&v)?;
+            Ok(Prior::RegistryField { key: key.clone(), name: name.clone(), field: field.clone(), old: get_kv(&text, field), existed: v.is_some() })
+        }
     }
 }
 
@@ -209,6 +254,19 @@ fn perform(pf: &dyn Platform, action: &Action, game: Option<GameCtx>, prior: &Pr
                 _ => String::new(),
             };
             pf.reg_set(GPU_PREFS_KEY, g.exe_path, &RegData::Sz(merge_kv(&current, "GpuPreference", &value.to_string())))
+        }
+        (Action::GameCpuSets { prefer }, Prior::CpuSets { pid, ids }) => {
+            if !ids.is_empty() {
+                // The user (or another tool) already picked cores for this game: leave it.
+                return Ok(());
+            }
+            let target = crate::platform::cpu_target(&pf.cpu_sets(), *prefer).ok_or("not needed on this CPU")?;
+            pf.set_process_cpu_sets(*pid, &target)
+        }
+        (Action::RegistryField { key, name, field, value }, Prior::RegistryField { .. }) => {
+            // Re-read right before writing so a change made since the capture is kept.
+            let current = reg_text(&pf.reg_get(key, name)?)?;
+            pf.reg_set(key, name, &RegData::Sz(merge_kv(&current, field, value)))
         }
         _ => Err("internal error: undo information does not match the change".into()),
     }
@@ -249,6 +307,25 @@ pub fn revert_prior(pf: &dyn Platform, prior: &Prior) -> PResult<()> {
         }
         Prior::KeepAwake => pf.set_keep_awake(false),
         Prior::Overlay { overlay } => pf.set_power_overlay(overlay),
+        Prior::CpuSets { pid, ids } => {
+            if pf.is_alive(*pid) {
+                pf.set_process_cpu_sets(*pid, ids)?;
+            }
+            Ok(())
+        }
+        Prior::RegistryField { key, name, field, old, existed } => {
+            // Only our entry goes back; anything else changed in the meantime stays.
+            let current = reg_text(&pf.reg_get(key, name)?)?;
+            let text = match old {
+                Some(v) => merge_kv(&current, field, v),
+                None => remove_kv(&current, field),
+            };
+            if text.is_empty() && !existed {
+                pf.reg_delete(key, name)
+            } else {
+                pf.reg_set(key, name, &RegData::Sz(text))
+            }
+        }
         Prior::Nothing => Ok(()),
     }
 }
@@ -264,6 +341,7 @@ pub fn action_in_effect(pf: &dyn Platform, action: &Action) -> PResult<bool> {
             cur_ac == *ac && dc.is_none_or(|d| d == cur_dc)
         }
         Action::MouseAcceleration { enabled } => (pf.mouse_params()?[2] != 0) == *enabled,
+        Action::RegistryField { key, name, field, value } => get_kv(&reg_text(&pf.reg_get(key, name)?)?, field).as_deref() == Some(value.as_str()),
         _ => false,
     })
 }
@@ -302,9 +380,11 @@ impl Engine {
     pub fn unavailable_reason(&self, t: &Tweak) -> Option<String> {
         let m = self.pf.machine();
         if !t.fits(&m) {
-            return Some(match t.form {
-                Form::Desktop if m.laptop => "Desktop PCs only".into(),
-                Form::Laptop if !m.laptop => "Laptops only".into(),
+            return Some(match (t.form, t.cpu) {
+                (Form::Desktop, _) if m.laptop => "Desktop PCs only".into(),
+                (Form::Laptop, _) if !m.laptop => "Laptops only".into(),
+                (_, CpuNeed::SplitCache) if !m.split_cache => "Only for CPUs with 3D V-Cache on one of two dies".into(),
+                (_, CpuNeed::Hybrid) if !m.hybrid => "Only for CPUs with performance and efficiency cores".into(),
                 _ => "Needs a newer Windows version".into(),
             });
         }
@@ -572,6 +652,43 @@ mod tests {
             d.file_name().to_string_lossy().starts_with("journal.json.corrupt-") && std::fs::read(d.path()).unwrap() == b"{ half a jour"
         });
         assert!(kept, "the unreadable journal must be moved aside, not lost");
+    }
+
+    #[test]
+    fn registry_field_keeps_other_entries_and_undoes_only_its_own() {
+        let (mut e, pf) = engine();
+        let k = || ("HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences".to_string(), "DirectXUserGlobalSettings".to_string());
+        // Nothing there before: undo deletes the value again.
+        e.apply("windowed_flip_model").unwrap();
+        assert_eq!(e.state("windowed_flip_model"), TweakState::Applied);
+        pf.with(|s| assert_eq!(s.reg.get(&k()), Some(&RegData::Sz("SwapEffectUpgradeEnable=1;".into()))));
+        e.revert("windowed_flip_model").unwrap();
+        pf.with(|s| assert!(!s.reg.contains_key(&k())));
+
+        // User had Auto HDR and the optimization off; turns VRR on while ours is applied.
+        pf.with(|s| s.reg.insert(k(), RegData::Sz("AutoHDREnable=1;SwapEffectUpgradeEnable=0;".into())));
+        e.apply("windowed_flip_model").unwrap();
+        pf.with(|s| assert_eq!(s.reg.get(&k()), Some(&RegData::Sz("AutoHDREnable=1;SwapEffectUpgradeEnable=1;".into()))));
+        pf.with(|s| s.reg.insert(k(), RegData::Sz("AutoHDREnable=1;SwapEffectUpgradeEnable=1;VRROptimizeEnable=1;".into())));
+        e.revert("windowed_flip_model").unwrap();
+        pf.with(|s| assert_eq!(s.reg.get(&k()), Some(&RegData::Sz("AutoHDREnable=1;SwapEffectUpgradeEnable=0;VRROptimizeEnable=1;".into()))));
+    }
+
+    #[test]
+    fn registry_field_refuses_unexpected_types() {
+        let (mut e, pf) = engine();
+        let raw = RegData::Raw { ty: 3, data: vec![1, 2] };
+        pf.with(|s| s.reg.insert(("HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences".into(), "DirectXUserGlobalSettings".into()), raw.clone()));
+        assert!(e.apply("windowed_flip_model").is_err());
+        pf.with(|s| assert_eq!(s.reg.values().next(), Some(&raw)));
+        assert!(e.journal.entries.is_empty());
+    }
+
+    #[test]
+    fn kv_helpers() {
+        assert_eq!(get_kv("A=1; SwapEffectUpgradeEnable=0;", "swapeffectupgradeenable").as_deref(), Some("0"));
+        assert_eq!(get_kv("A=1;", "B"), None);
+        assert_eq!(remove_kv("A=1;B=2;", "a"), "B=2;");
     }
 
     #[test]

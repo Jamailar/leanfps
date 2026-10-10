@@ -268,6 +268,11 @@ const GAME_ROOTS: &[&str] = &[
     "\\amazon games\\library\\",
     "\\itch\\apps\\",
     "\\battlestate games\\",
+    "\\origin games\\",
+    "\\hoyoplay\\games\\",
+    "\\wegameapps\\",
+    "\\modifiablewindowsapps\\",
+    "\\games\\heroic\\",
 ];
 
 /// If `exe_path` sits in a well-known game folder, the game's folder name.
@@ -360,6 +365,8 @@ mod tests {
         assert_eq!(game_folder(r"C:\Riot Games\VALORANT\live\VALORANT.exe").as_deref(), Some("VALORANT"));
         assert_eq!(game_folder(r"D:\Epic Games\Fortnite\FortniteGame\Binaries\Win64\x.exe").as_deref(), Some("Fortnite"));
         assert_eq!(game_folder(r"C:\Riot Games\RiotClient.exe"), None);
+        assert_eq!(game_folder(r"C:\Program Files\HoYoPlay\games\Honkai Star Rail Game\StarRail.exe").as_deref(), Some("Honkai Star Rail Game"));
+        assert_eq!(game_folder(r"D:\WeGameApps\英雄联盟\Game\League of Legends.exe").as_deref(), Some("英雄联盟"));
         assert_eq!(game_folder(r"C:\Program Files\Notepad++\notepad++.exe"), None);
     }
 

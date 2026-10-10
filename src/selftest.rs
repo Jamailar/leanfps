@@ -32,7 +32,7 @@ enum Snap {
 
 fn snapshot(pf: &dyn Platform, a: &Action) -> Snap {
     match a {
-        Action::Registry { key, name, .. } => Snap::Reg(pf.reg_get(key, name).unwrap_or(None)),
+        Action::Registry { key, name, .. } | Action::RegistryField { key, name, .. } => Snap::Reg(pf.reg_get(key, name).unwrap_or(None)),
         Action::PowerScheme { .. } => Snap::Scheme(pf.power_active_scheme().unwrap_or_default()),
         Action::PowerSetting { subgroup, setting, .. } => {
             let s = pf.power_active_scheme().unwrap_or_default();
@@ -130,6 +130,31 @@ pub fn run() -> i32 {
                     out!(log, "OK   {genre:?} session restored");
                 }
             }
+            // CPU sets (V-Cache / performance-core tweaks): set, read back, clear.
+            let sets = pf.cpu_sets();
+            out!(log, "cpu sets: {} logical processors, L3 sizes {:?} KB, efficiency classes {:?}", sets.len(),
+                sets.iter().map(|s| s.l3_kb).collect::<std::collections::BTreeSet<_>>(), sets.iter().map(|s| s.efficiency).collect::<std::collections::BTreeSet<_>>());
+            if !sets.is_empty() && sets.iter().all(|s| s.l3_kb == 0) {
+                // Not fatal (the V-Cache tweak just stays off), but worth seeing in the log.
+                out!(log, "NOTE no L3 cache sizes reported for this CPU");
+            }
+            if sets.len() >= 2 {
+                let want: Vec<u32> = sets.iter().take(sets.len() / 2).map(|s| s.id).collect();
+                let before = pf.process_cpu_sets(pid);
+                let set = pf.set_process_cpu_sets(pid, &want);
+                let during = pf.process_cpu_sets(pid);
+                let clear = pf.set_process_cpu_sets(pid, &[]);
+                let after = pf.process_cpu_sets(pid);
+                if before == Ok(vec![]) && set.is_ok() && during.as_ref() == Ok(&want) && clear.is_ok() && after == Ok(vec![]) {
+                    out!(log, "OK   cpu sets set, read back and cleared");
+                } else {
+                    failures += 1;
+                    out!(log, "FAIL cpu sets: before={before:?} set={set:?} during={during:?} clear={clear:?} after={after:?}");
+                }
+            } else {
+                failures += 1;
+                out!(log, "FAIL no CPU set information");
+            }
             let _ = child.kill();
         }
     }
@@ -147,17 +172,23 @@ pub fn run() -> i32 {
     }
     out!(log, "free memory: {:?} MB", pf.free_memory_mb());
 
-    out!(log, "\n== frame counter (300 presents from a hidden Direct3D 11 WARP window)");
+    out!(log, "\n== frame counter (300 presents from a Direct3D 11 WARP window)");
     #[cfg(windows)]
-    match present_test() {
-        Ok((frames, avg)) if frames >= 250 => out!(log, "OK   counted {frames} frame times, {avg:.0} FPS average"),
-        Ok((frames, avg)) => {
-            failures += 1;
-            out!(log, "FAIL counted only {frames} frame times ({avg:.0} FPS)");
-        }
-        Err(e) => {
-            failures += 1;
-            out!(log, "FAIL {e}");
+    {
+        use crate::frames::Sources;
+        // DirectX events, then kernel events alone: the path Vulkan and OpenGL games are counted by.
+        for (label, sources) in [("DXGI events", Sources { runtime: true, kernel: false }), ("kernel events", Sources { runtime: false, kernel: true }), ("both", Sources::default())] {
+            match present_test(sources) {
+                Ok((frames, avg)) if (250..=310).contains(&frames) => out!(log, "OK   {label}: counted {frames} frame times, {avg:.0} FPS average"),
+                Ok((frames, avg)) => {
+                    failures += 1;
+                    out!(log, "FAIL {label}: counted {frames} frame times ({avg:.0} FPS), expected about 299");
+                }
+                Err(e) => {
+                    failures += 1;
+                    out!(log, "FAIL {label}: {e}");
+                }
+            }
         }
     }
 
@@ -221,7 +252,7 @@ pub fn run() -> i32 {
 
 /// Present 300 frames from this process and count them with the ETW frame counter.
 #[cfg(windows)]
-fn present_test() -> Result<(u64, f64), String> {
+fn present_test(sources: crate::frames::Sources) -> Result<(u64, f64), String> {
     use ::windows::core::{w, HSTRING};
     use ::windows::Win32::Foundation::{HMODULE, HWND};
     use ::windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_WARP;
@@ -229,18 +260,22 @@ fn present_test() -> Result<(u64, f64), String> {
     use ::windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_MODE_DESC, DXGI_SAMPLE_DESC};
     use ::windows::Win32::Graphics::Dxgi::{IDXGISwapChain, DXGI_PRESENT, DXGI_SWAP_CHAIN_DESC, DXGI_SWAP_EFFECT_DISCARD, DXGI_USAGE_RENDER_TARGET_OUTPUT};
     use ::windows::Win32::System::LibraryLoader::GetModuleHandleW;
-    use ::windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DefWindowProcW, RegisterClassW, WINDOW_EX_STYLE, WNDCLASSW, WS_OVERLAPPEDWINDOW};
+    use ::windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, ShowWindow, SW_SHOWNOACTIVATE, WINDOW_EX_STYLE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+    };
 
     unsafe extern "system" fn wndproc(h: HWND, m: u32, w: ::windows::Win32::Foundation::WPARAM, l: ::windows::Win32::Foundation::LPARAM) -> ::windows::Win32::Foundation::LRESULT {
         DefWindowProcW(h, m, w, l)
     }
-    let capture = crate::frames::PresentCapture::start(std::process::id())?;
+    let capture = crate::frames::PresentCapture::start_with(std::process::id(), sources)?;
     unsafe {
         let inst = GetModuleHandleW(None).map_err(|e| e.message().to_string())?;
         let wc = WNDCLASSW { lpfnWndProc: Some(wndproc), hInstance: inst.into(), lpszClassName: w!("LeanFPS.PresentTest"), ..Default::default() };
         RegisterClassW(&wc);
         let hwnd: HWND = CreateWindowExW(WINDOW_EX_STYLE::default(), w!("LeanFPS.PresentTest"), &HSTRING::from("present test"), WS_OVERLAPPEDWINDOW, 0, 0, 320, 240, None, None, Some(inst.into()), None)
             .map_err(|e| e.message().to_string())?;
+        // Visible, so the presents really reach the screen (and the kernel present path).
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         let desc = DXGI_SWAP_CHAIN_DESC {
             BufferDesc: DXGI_MODE_DESC { Width: 320, Height: 240, Format: DXGI_FORMAT_R8G8B8A8_UNORM, ..Default::default() },
             SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
@@ -261,6 +296,8 @@ fn present_test() -> Result<(u64, f64), String> {
             let _ = sc.Present(0, DXGI_PRESENT(0));
             std::thread::sleep(std::time::Duration::from_millis(4));
         }
+        drop(sc);
+        let _ = DestroyWindow(hwnd);
     }
     // Real-time sessions flush about once a second.
     std::thread::sleep(std::time::Duration::from_millis(2500));

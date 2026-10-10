@@ -86,6 +86,18 @@ impl Genre {
     }
 }
 
+/// CPU layout a tweak needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CpuNeed {
+    #[default]
+    Any,
+    /// Two L3 caches of different size (AMD X3D with one V-Cache die).
+    SplitCache,
+    /// Performance and efficiency cores.
+    Hybrid,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Form {
@@ -159,6 +171,12 @@ pub enum Action {
     /// Per-game graphics preference (2 = high performance GPU). Kept after the game exits,
     /// because Windows reads it when the game starts; undone with Restore all.
     GpuPreference { value: u32 },
+    /// Run the game on a subset of cores (Windows CPU sets) while it runs. Skipped when the
+    /// game already has its own core choice.
+    GameCpuSets { prefer: crate::platform::CpuPrefer },
+    /// Set one `field=value;` entry inside a registry string such as
+    /// `DirectXUserGlobalSettings`, keeping the other entries. Undo restores only that entry.
+    RegistryField { key: String, name: String, field: String, value: String },
 }
 
 impl Action {
@@ -173,6 +191,7 @@ impl Action {
                 | Action::StandbyPurge { .. }
                 | Action::PowerOverlay { .. }
                 | Action::GpuPreference { .. }
+                | Action::GameCpuSets { .. }
         )
     }
 
@@ -205,6 +224,8 @@ pub struct Tweak {
     #[serde(default)]
     pub min_build: u32,
     #[serde(default)]
+    pub cpu: CpuNeed,
+    #[serde(default)]
     pub sources: Vec<String>,
     pub actions: Vec<Action>,
 }
@@ -225,7 +246,12 @@ impl Tweak {
             Form::Desktop => !m.laptop,
             Form::Laptop => m.laptop,
         };
-        form_ok && (self.min_build == 0 || m.os_build == 0 || m.os_build >= self.min_build)
+        let cpu_ok = match self.cpu {
+            CpuNeed::Any => true,
+            CpuNeed::SplitCache => m.split_cache,
+            CpuNeed::Hybrid => m.hybrid,
+        };
+        form_ok && cpu_ok && (self.min_build == 0 || m.os_build == 0 || m.os_build >= self.min_build)
     }
 
     pub fn in_preset(&self, preset: &str) -> bool {
@@ -292,13 +318,13 @@ impl Catalog {
                         return Err(format!("tweak {}: {p} is a Windows process and must never be slowed down", t.id));
                     }
                 }
-                if let Action::Registry { key, name, .. } = a {
+                if let Action::Registry { key, name, .. } | Action::RegistryField { key, name, .. } = a {
                     let k = key.to_ascii_lowercase();
                     if k.contains("image file execution options") || name.eq_ignore_ascii_case("Debugger") {
                         return Err(format!("tweak {}: Image File Execution Options is only for launch priority, set in code", t.id));
                     }
                 }
-                if let Action::Registry { key, .. } = a {
+                if let Action::Registry { key, .. } | Action::RegistryField { key, .. } = a {
                     if !(key.starts_with("HKCU\\") || key.starts_with("HKLM\\")) {
                         return Err(format!("tweak {}: registry key must start with HKCU\\ or HKLM\\", t.id));
                     }
