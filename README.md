@@ -1,10 +1,11 @@
 # LeanFPS
 
-**[Website](https://leanfps.com/) · [Download](https://leanfps.com/download/) · [Pro $19](https://leanfps.com/pro/) · [Compare 8 game optimizers](https://leanfps.com/game-optimizer-comparison/) · [Radiant Optimizer alternatives](https://leanfps.com/radiant-optimizer-alternative/)**
+**[Website](https://leanfps.com/) · [Download](https://leanfps.com/download/) · [Pro](https://leanfps.com/pro/) · [Compare 8 game optimizers](https://leanfps.com/game-optimizer-comparison/) · [Radiant Optimizer alternatives](https://leanfps.com/radiant-optimizer-alternative/)**
 
-A tiny, open-source game performance optimizer for Windows 10/11, written in Rust, and a
-lightweight alternative to Radiant Optimizer, Hone, Razer Cortex, Tier1Suite and Process
-Lasso. One ~6.5 MB executable: no installer required, no .NET, no WebView, no account.
+**Free, open source and tiny.** LeanFPS is a game performance optimizer for Windows 10/11
+written in Rust, the free and lightweight alternative to Radiant Optimizer, Hone, Razer
+Cortex, Tier1Suite and Process Lasso. One native ~6.5 MB executable: no installer required,
+no .NET, no WebView, no Overwolf, no account.
 
 LeanFPS recognizes the game you are playing, applies [tweaks that have a real mechanism
 behind them](https://leanfps.com/optimizations/) (power plan, core parking, process priority, V-Cache placement on X3D CPUs,
@@ -18,31 +19,35 @@ touches Defender, Memory Integrity, the firewall, Windows Update or CPU mitigati
 ## Open source, with an optional Pro
 
 The full source is here under the MIT license. Build it, read it, change it, ship your own
-version. If you'd rather not bother, [LeanFPS Pro](https://leanfps.com/pro/) is a one-time purchase
-(14-day refund, up to 3 PCs) and supports the project. Lost your key or changed PCs? Use the
+version. If you'd rather not bother, [LeanFPS Pro](https://leanfps.com/pro/) unlocks everything in the
+official build and supports the project. Lost your key or changed PCs? Use the
 [license page](https://leanfps.com/license/). Questions: [contact](https://leanfps.com/contact/).
 
 ## LeanFPS vs Radiant Optimizer, Hone, Razer Cortex, Tier1Suite, Process Lasso and WinUtil
 
-Short version, from each maker's own pages (read 2026-10-10). The full table follows below,
-and the [game optimizer comparison](https://leanfps.com/game-optimizer-comparison/) on leanfps.com has charts.
+Three things set LeanFPS apart: it is **free and open source**, it is **small** (one ~6.5 MB
+exe), and it is **native Rust**, so it starts fast and uses next to no memory or CPU while
+you play. Facts about the others come from each maker's own pages (read 2026-10-10); the
+full table follows, and the [game optimizer comparison](https://leanfps.com/game-optimizer-comparison/)
+on leanfps.com has charts.
 
-- **LeanFPS vs Radiant Optimizer**: Radiant Optimizer is $57.77 once with a 194 MB installer
-  (v7.0.4), and its refund policy says "completed purchases are final". LeanFPS is open
-  source, about 6.5 MB, $19 for Pro with a 14-day refund, and measures FPS and 1% lows every
-  session. See [LeanFPS vs Radiant Optimizer](https://leanfps.com/leanfps-vs-radiant-optimizer/) and
-  [7 Radiant Optimizer alternatives](https://leanfps.com/radiant-optimizer-alternative/).
-- **LeanFPS vs Hone**: Hone is delivered through Overwolf, needs a sign-in, and Premium is
-  $5.99 a month or $39.99 a year. LeanFPS is standalone, needs no account and has no subscription.
-- **LeanFPS vs Razer Cortex**: Razer Cortex is free but comes with the Cortex launcher, deals
-  and rewards; Booster Prime shows a predicted FPS. LeanFPS measures the FPS you actually get.
-- **LeanFPS vs Tier1Suite**: Tier1Suite Pro is $29.99 once with a 75 MB installer, and its
-  Pro catalog offers turning off VBS and Memory Integrity. LeanFPS never weakens Windows security.
-- **LeanFPS vs Process Lasso**: Process Lasso is a great process manager with an always-on
-  service, but does not measure FPS. LeanFPS's background check is optional and only looks
+- **LeanFPS vs Radiant Optimizer**: Radiant Optimizer ships a 194 MB installer (v7.0.4) and
+  is closed source. LeanFPS is open source, about 30 times smaller, and measures your FPS
+  and 1% lows every session. See [LeanFPS vs Radiant Optimizer](https://leanfps.com/leanfps-vs-radiant-optimizer/)
+  and [7 Radiant Optimizer alternatives](https://leanfps.com/radiant-optimizer-alternative/).
+- **LeanFPS vs Hone**: Hone is delivered through Overwolf and needs a sign-in. LeanFPS is a
+  standalone native exe with no account and no extra platform.
+- **LeanFPS vs Razer Cortex**: Razer Cortex comes inside the Cortex launcher with deals and
+  rewards, and Booster Prime shows a predicted FPS. LeanFPS is just the optimizer, and
+  measures the FPS you actually get.
+- **LeanFPS vs Tier1Suite**: Tier1Suite is a 75 MB installer and its Pro catalog offers turning
+  off VBS and Memory Integrity. LeanFPS is a fraction of the size and never weakens Windows security.
+- **LeanFPS vs Process Lasso**: Process Lasso is a process manager with an always-on
+  service and no FPS measurement. LeanFPS's background check is optional and only looks
   at the foreground window every 2 s.
-- **LeanFPS vs WinUtil**: Chris Titus WinUtil is free and MIT like LeanFPS, but its optional
-  "Disable Updates" tweak also stops security updates, and it has no game detection.
+- **LeanFPS vs WinUtil**: Chris Titus WinUtil is free and MIT like LeanFPS, but it is a
+  PowerShell script, its optional "Disable Updates" tweak also stops security updates, and it
+  has no game detection or FPS measurement.
 - **LeanFPS vs Windows Game Mode**: keep Game Mode on (LeanFPS turns it on for you); LeanFPS
   adds per-game tuning, FPS measurement and undo on top.
 
@@ -50,10 +55,8 @@ and the [game optimizer comparison](https://leanfps.com/game-optimizer-compariso
 
 | | **LeanFPS** | **Radiant Optimizer** | **Hone** | **Razer Cortex** | **Tier1Suite** | **Process Lasso** | **WinUtil** | **Windows Game Mode** |
 |---|---|---|---|---|---|---|---|---|
-| **Price** | | | | | | | | |
-| Free version | ✅ Detection, FPS measurement, core tweaks; no time limit | ✅ 8 starter tweaks; profiles only as a preview | 🟡 10 optimizations (15 with referrals), with ads | ✅ No paid tier shown | ✅ 20 of 43 catalog entries | ✅ Free edition | ✅ Free, MIT license | ✅ Built in |
-| Full version price <br><sub>One PC, US prices</sub> | ✅ $19 once (early bird; $29 after release) | 🟡 $57.77 once | ❌ $5.99 a month or $39.99 a year | ✅ Free | 🟡 $29.99 once (3 PCs) | 🟡 $39.95 lifetime, or $24.95 a year | ✅ Free | ✅ Free |
-| Refunds | ✅ 14 days, no questions asked | ❌ “Completed purchases are final” | 🟡 Xsolla policy; renewals only within 48 hours | ➖ Not applicable | ✅ 14 days | ✅ 30 days, no questions asked | ➖ Not applicable | ➖ Not applicable |
+| **Free and open** | | | | | | | | |
+| What is free | ✅ Detection, FPS measurement, core tweaks; no time limit | ✅ 8 starter tweaks; profiles only as a preview | 🟡 10 optimizations (15 with referrals), with ads | ✅ No paid tier shown | ✅ 20 of 43 catalog entries | ✅ Free edition | ✅ Free, MIT license | ✅ Built in |
 | **Size and footprint** | | | | | | | | |
 | Download size | ✅ About 6.5 MB, one exe | ❌ 194 MB installer (v7.0.4) | 🟡 3 MB Overwolf stub, downloads more | 🟡 15 MB web installer, downloads more | ❌ 75 MB installer | ✅ 3 MB installer | ✅ 0.9 MB PowerShell script | ✅ Nothing to install |
 | No account needed | ✅ No account; Pro is a license key | 🟡 Free: no. Premium: account and motherboard-locked licence | ❌ “Do I need to sign in? Yes.” | ❔ Not stated | ✅ No account | ✅ Pro needs an activation code | ✅ No account; run as administrator | ✅ No account |
@@ -73,7 +76,7 @@ and the [game optimizer comparison](https://leanfps.com/game-optimizer-compariso
 | Open source | ✅ MIT | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ MIT | ❌ |
 | Support | ✅ Email: contact@leanfps.com | 🟡 Discord only | ✅ Contact page, Discord | ✅ Razer support | ✅ Contact form | ✅ Forum, contact form | ✅ GitHub issues, Discord | ✅ Microsoft support |
 
-✅ yes · 🟡 partly · ❌ no · ➖ not applicable · ❔ not stated by the maker. Competitor facts come only from each maker's own pages, read on 2026-10-10; anything they don't state is marked as not stated. Prices are US prices for one PC.
+✅ yes · 🟡 partly · ❌ no · ❔ not stated by the maker. Competitor facts come only from each maker's own pages, read on 2026-10-10; anything they don't state is marked as not stated.
 
 Sources:
 
@@ -204,7 +207,7 @@ selftest, CI, Pro license key activation. Next: frametime measurement (ETW), cod
 
 ## Pro license
 
-Pro is a one-time purchase on [leanfps.com/pro](https://leanfps.com/pro/). The buyer gets a key by email and
+Pro is available on [leanfps.com/pro](https://leanfps.com/pro/). The buyer gets a key by email and
 enters it with **Enter key** (footer) or *Settings > License*. `src/license.rs` activates it
 through the license server (`https://api.hyperchaos.dev/leanfps/v1/licenses/...`) and saves the signed file as `license.json` in
 the data folder. Every start verifies it offline (Ed25519, public keys in `PUBLIC_KEYS`);
@@ -225,10 +228,11 @@ the exe small. Window preview in both themes: `docs/ui-preview.png`.
 ## FAQ
 
 **Is LeanFPS a free Radiant Optimizer alternative?** Yes. The source is MIT and you can build
-it yourself; the free version has no time limit. Pro is $19 once. More options:
+it yourself, and the free version has no time limit. More options:
 [Radiant Optimizer alternatives](https://leanfps.com/radiant-optimizer-alternative/).
 
-**Is it better than Hone or Razer Cortex?** It is smaller, needs no account or launcher,
+**Is it better than Hone or Razer Cortex?** It is free, open source and much smaller, written in
+native Rust, needs no account or launcher,
 and shows your measured FPS and 1% lows so you can judge for yourself. See the
 [comparison](https://leanfps.com/game-optimizer-comparison/).
 
