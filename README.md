@@ -1,13 +1,16 @@
 # LeanFPS
 
-A tiny game performance optimizer for Windows 10/11, written in Rust. One ~6.5 MB
-executable: no installer required, no .NET, no WebView, no account.
+**[Website](https://leanfps.com/) · [Download](https://leanfps.com/download/) · [Pro $19](https://leanfps.com/pro/) · [Compare 8 game optimizers](https://leanfps.com/game-optimizer-comparison/) · [Radiant Optimizer alternatives](https://leanfps.com/radiant-optimizer-alternative/)**
 
-LeanFPS recognizes the game you are playing, applies tweaks that have a real mechanism
-behind them (power plan, core parking, process priority, V-Cache placement on X3D CPUs,
-genre-specific settings) and **measures your real FPS and 1% lows every session**, so you
+A tiny, open-source game performance optimizer for Windows 10/11, written in Rust, and a
+lightweight alternative to Radiant Optimizer, Hone, Razer Cortex, Tier1Suite and Process
+Lasso. One ~6.5 MB executable: no installer required, no .NET, no WebView, no account.
+
+LeanFPS recognizes the game you are playing, applies [tweaks that have a real mechanism
+behind them](https://leanfps.com/optimizations/) (power plan, core parking, process priority, V-Cache placement on X3D CPUs,
+[genre-specific settings](https://leanfps.com/games/)) and **[measures your real FPS and 1% lows every session](https://leanfps.com/fps-measurement/)**, so you
 can see whether a change actually helped. Every change saves the real previous value first
-and can be undone one at a time, all at once, or automatically after a crash. It never
+and can be [undone one at a time, all at once, or automatically after a crash](https://leanfps.com/safety/). It never
 touches Defender, Memory Integrity, the firewall, Windows Update or CPU mitigations.
 
 ![LeanFPS window in dark and light themes](docs/ui-preview.png)
@@ -15,8 +18,33 @@ touches Defender, Memory Integrity, the firewall, Windows Update or CPU mitigati
 ## Open source, with an optional Pro
 
 The full source is here under the MIT license. Build it, read it, change it, ship your own
-version. If you'd rather not bother, LeanFPS Pro is a one-time purchase at
-<https://leanfps.com/pro/> (14-day refund, up to 3 PCs) and supports the project.
+version. If you'd rather not bother, [LeanFPS Pro](https://leanfps.com/pro/) is a one-time purchase
+(14-day refund, up to 3 PCs) and supports the project. Lost your key or changed PCs? Use the
+[license page](https://leanfps.com/license/). Questions: [contact](https://leanfps.com/contact/).
+
+## LeanFPS vs Radiant Optimizer, Hone, Razer Cortex, Tier1Suite, Process Lasso and WinUtil
+
+Short version, from each maker's own pages (read 2026-10-10). The full table follows below,
+and the [game optimizer comparison](https://leanfps.com/game-optimizer-comparison/) on leanfps.com has charts.
+
+- **LeanFPS vs Radiant Optimizer**: Radiant Optimizer is $57.77 once with a 194 MB installer
+  (v7.0.4), and its refund policy says "completed purchases are final". LeanFPS is open
+  source, about 6.5 MB, $19 for Pro with a 14-day refund, and measures FPS and 1% lows every
+  session. See [LeanFPS vs Radiant Optimizer](https://leanfps.com/leanfps-vs-radiant-optimizer/) and
+  [7 Radiant Optimizer alternatives](https://leanfps.com/radiant-optimizer-alternative/).
+- **LeanFPS vs Hone**: Hone is delivered through Overwolf, needs a sign-in, and Premium is
+  $5.99 a month or $39.99 a year. LeanFPS is standalone, needs no account and has no subscription.
+- **LeanFPS vs Razer Cortex**: Razer Cortex is free but comes with the Cortex launcher, deals
+  and rewards; Booster Prime shows a predicted FPS. LeanFPS measures the FPS you actually get.
+- **LeanFPS vs Tier1Suite**: Tier1Suite Pro is $29.99 once with a 75 MB installer, and its
+  Pro catalog offers turning off VBS and Memory Integrity. LeanFPS never weakens Windows security.
+- **LeanFPS vs Process Lasso**: Process Lasso is a great process manager with an always-on
+  service, but does not measure FPS. LeanFPS's background check is optional and only looks
+  at the foreground window every 2 s.
+- **LeanFPS vs WinUtil**: Chris Titus WinUtil is free and MIT like LeanFPS, but its optional
+  "Disable Updates" tweak also stops security updates, and it has no game detection.
+- **LeanFPS vs Windows Game Mode**: keep Game Mode on (LeanFPS turns it on for you); LeanFPS
+  adds per-game tuning, FPS measurement and undo on top.
 
 ## How it compares
 
@@ -59,20 +87,22 @@ Sources:
 
 ## What it does
 
-- **System tweaks** (persistent): power plan, core parking, Game Mode, background recording,
+- **[System tweaks](https://leanfps.com/optimizations/)** (persistent): power plan, core parking, Game Mode, background recording,
   Windows 11 optimizations for windowed games, plus advanced opt-ins (HAGS, MPO). The real previous value is saved before every change and
   restored on undo, one tweak at a time or all at once.
 - **While gaming** (session): when a game is in the foreground LeanFPS raises its priority,
   opts it out of power throttling, keeps the PC awake and lowers background apps. On Ryzen
   X3D CPUs with two dies the game runs on the V-Cache die (Windows CPU sets). Everything
   is undone when the game exits, and after a crash on the next start.
-- **Game profiles**: the game is identified (built-in database, Steam and Epic libraries,
+- **[Game profiles](https://leanfps.com/games/)**: the game is identified (built-in database, Steam and Epic libraries,
   or fullscreen fallback), its icon is shown, and genre-specific tweaks run (e.g. mouse
   acceleration off for shooters, standby-memory purge for open-world games).
 - Never: Defender, HVCI/VBS, firewall, Windows Update, CPU mitigations, game injection or
   overlays.
 
 ## Safety rules
+
+More on the [safety page](https://leanfps.com/safety/).
 
 - **Record first, then modify.** Every change reads the current value and writes it to the
   undo journal on disk (flushed) before touching the system. If the journal can't be saved,
@@ -174,12 +204,13 @@ selftest, CI, Pro license key activation. Next: frametime measurement (ETW), cod
 
 ## Pro license
 
-Pro is a one-time purchase on https://leanfps.com/pro/. The buyer gets a key by email and
+Pro is a one-time purchase on [leanfps.com/pro](https://leanfps.com/pro/). The buyer gets a key by email and
 enters it with **Enter key** (footer) or *Settings > License*. `src/license.rs` activates it
 through the license server (`https://api.hyperchaos.dev/leanfps/v1/licenses/...`) and saves the signed file as `license.json` in
 the data folder. Every start verifies it offline (Ed25519, public keys in `PUBLIC_KEYS`);
 a background refresh runs when the file asks for one. Network errors never remove the file;
 only a definite refusal from the server (refunded, device removed) does.
+Buyers find their key and remove PCs on the [license page](https://leanfps.com/license/).
 `tools/license_fixture.mjs` regenerates the signed test fixture.
 
 ## Icons
@@ -191,6 +222,24 @@ Sources are SVG in `res/icon/` (`app.svg` large, `app-small.svg` for 16-32 px, `
 The window uses Inter (SIL Open Font License, `res/fonts/OFL.txt`), subset to Latin to keep
 the exe small. Window preview in both themes: `docs/ui-preview.png`.
 
+## FAQ
+
+**Is LeanFPS a free Radiant Optimizer alternative?** Yes. The source is MIT and you can build
+it yourself; the free version has no time limit. Pro is $19 once. More options:
+[Radiant Optimizer alternatives](https://leanfps.com/radiant-optimizer-alternative/).
+
+**Is it better than Hone or Razer Cortex?** It is smaller, needs no account or launcher,
+and shows your measured FPS and 1% lows so you can judge for yourself. See the
+[comparison](https://leanfps.com/game-optimizer-comparison/).
+
+**Does it send data?** No telemetry. It only goes online to activate and refresh Pro. See the
+[privacy policy](https://leanfps.com/privacy/).
+
+**Is it safe with anti-cheat?** No injection and no overlay; details on the
+[safety page](https://leanfps.com/safety/).
+
 ## License
 
 MIT, see `LICENSE`. The Inter fonts in `res/fonts/` are under the SIL Open Font License.
+
+Website: [leanfps.com](https://leanfps.com/) · [About](https://leanfps.com/about/) · [Terms](https://leanfps.com/terms/)
