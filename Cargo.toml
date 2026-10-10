@@ -1,0 +1,63 @@
+[package]
+name = "leanfps"
+version = "0.1.146"
+edition = "2021"
+description = "Tiny game performance optimizer for Windows"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "leanfps"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+eframe = { version = "0.36", default-features = false, features = ["glow", "default_fonts"] }
+# Offline check of the signed Pro license file.
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+sha2 = { version = "0.10", default-features = false }
+
+# Linux is only for development and tests; the product is Windows-only.
+[target.'cfg(target_os = "linux")'.dependencies]
+eframe = { version = "0.36", default-features = false, features = ["x11"] }
+
+[target.'cfg(windows)'.dependencies]
+# Fallback renderer for PCs without a usable OpenGL driver (virtual machines, some ARM laptops,
+# Remote Desktop): Direct3D 12 only, which can also run on the WARP software rasterizer.
+eframe = { version = "0.36", default-features = false, features = ["glow", "default_fonts", "wgpu_no_default_features"] }
+wgpu = { version = "30", default-features = false, features = ["std", "dx12", "wgsl"] }
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Graphics_Gdi",
+  "Win32_Networking_WinHttp",
+  "Win32_Security",
+  "Win32_System_Console",
+  "Win32_System_Performance",
+  "Win32_System_Power",
+  "Win32_System_Registry",
+  "Win32_System_Threading",
+  "Win32_System_Time",
+  "Win32_System_ProcessStatus",
+  "Win32_System_SystemInformation",
+  "Win32_System_Diagnostics_Etw",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_LibraryLoader",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[build-dependencies]
+embed-resource = "3"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

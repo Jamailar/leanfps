@@ -1,0 +1,8 @@
+#define RT_MANIFEST 24
+1 RT_MANIFEST "leanfps.manifest"
+
+// Icon 1 is what Explorer, the taskbar and shortcuts show.
+1 ICON "leanfps.ico"
+// Tray icons: idle (no game) and active (optimizing a game).
+101 ICON "tray-idle.ico"
+102 ICON "tray-active.ico"

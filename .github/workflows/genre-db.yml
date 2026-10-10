@@ -1,0 +1,50 @@
+name: genre-db
+
+# Rebuilds data/steam_genres.tsv from SteamSpy tag votes. Slow (SteamSpy allows 1 request per
+# second), so it only runs when asked or when the tools change. The result is committed to the
+# branch the run started from (and kept as an artifact).
+on:
+  workflow_dispatch:
+    inputs:
+      pages:
+        description: "SteamSpy pages (1000 most-owned apps each)"
+        default: "4"
+  push:
+    paths:
+      - .github/workflows/genre-db.yml
+      - tools/fetch_steamspy.py
+      - tools/build_genre_db.py
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch tag votes
+        run: python3 tools/fetch_steamspy.py "${{ github.event.inputs.pages || '4' }}" details.jsonl
+      - name: Build genre table
+        run: |
+          python3 tools/build_genre_db.py details.jsonl > data/steam_genres.tsv
+          wc -l data/steam_genres.tsv
+          grep -P '^(730|570|1172470|1245620|271590)\t' data/steam_genres.tsv || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: steam-genres
+          path: |
+            data/steam_genres.tsv
+            details.jsonl
+          retention-days: 30
+      - name: Commit the table to this branch
+        if: github.ref != 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/steam_genres.tsv
+          if git diff --cached --quiet; then echo "no change"; exit 0; fi
+          git commit -m "Steam genre table from SteamSpy tag votes ($(grep -vc '^#' data/steam_genres.tsv) games)"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
