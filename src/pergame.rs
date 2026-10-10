@@ -3,7 +3,7 @@
 //! Each records the real previous value; `Restore all` and turning the tweak off undo them.
 
 use crate::catalog::RegData;
-use crate::engine::{ifeo_key, ifeo_priority, revert_prior, Prior};
+use crate::engine::{ifeo_key, ifeo_priority, revert_prior, undo_failed, Prior};
 use crate::catalog::Priority;
 use crate::platform::{file_name_lower, PResult, Platform};
 use crate::store::Store;
@@ -33,9 +33,10 @@ impl PerGame {
         p
     }
 
-    fn save(&self) {
-        if let Some(s) = &self.store {
-            let _ = s.save(FILE, self);
+    fn save(&self) -> PResult<()> {
+        match &self.store {
+            Some(s) => s.save(FILE, self),
+            None => Ok(()),
         }
     }
 
@@ -44,9 +45,25 @@ impl PerGame {
         self.entries.iter().any(|e| e.tweak == tweak && e.exe == exe)
     }
 
-    pub fn record(&mut self, tweak: &str, exe_path: &str, prior: Prior) {
+    /// Persist a prior before its change runs. On error nothing is kept and the caller must
+    /// not make the change.
+    pub fn record(&mut self, tweak: &str, exe_path: &str, prior: Prior) -> PResult<()> {
         self.entries.push(PerGameEntry { tweak: tweak.into(), exe: file_name_lower(exe_path), prior });
-        self.save();
+        let r = self.save();
+        if r.is_err() {
+            self.entries.pop();
+        }
+        r
+    }
+
+    /// The change after [`record`](Self::record) failed: undo it, and drop the record if that worked.
+    pub fn forget_failed(&mut self, pf: &dyn Platform, tweak: &str, exe_path: &str) {
+        let exe = file_name_lower(exe_path);
+        let Some(i) = self.entries.iter().rposition(|e| e.tweak == tweak && e.exe == exe) else { return };
+        if undo_failed(pf, &self.entries[i].prior) {
+            self.entries.remove(i);
+            let _ = self.save();
+        }
     }
 
     /// Fallback when Windows refuses to change a running game's priority (anti-cheat
@@ -57,8 +74,11 @@ impl PerGame {
         }
         let key = ifeo_key(&file_name_lower(exe_path));
         let before = pf.reg_get(&key, "CpuPriorityClass")?;
-        pf.reg_set(&key, "CpuPriorityClass", &RegData::Dword(ifeo_priority(class)))?;
-        self.record(tweak, exe_path, Prior::Registry { key, name: "CpuPriorityClass".into(), value: before });
+        self.record(tweak, exe_path, Prior::Registry { key: key.clone(), name: "CpuPriorityClass".into(), value: before })?;
+        if let Err(e) = pf.reg_set(&key, "CpuPriorityClass", &RegData::Dword(ifeo_priority(class))) {
+            self.forget_failed(pf, tweak, exe_path);
+            return Err(e);
+        }
         Ok(true)
     }
 
@@ -75,7 +95,9 @@ impl PerGame {
         }
         left.reverse();
         self.entries = left;
-        self.save();
+        if let Err(e) = self.save() {
+            errs.push(format!("could not update {FILE}: {e}"));
+        }
         errs
     }
 

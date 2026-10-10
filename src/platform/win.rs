@@ -138,13 +138,16 @@ impl Platform for WinPlatform {
         win(unsafe { RegQueryValueExW(hk.0, &name_w, None, Some(&mut ty), Some(buf.as_mut_ptr()), Some(&mut size)) }, "read registry value")?;
         buf.truncate(size as usize);
         Ok(match ty {
-            REG_DWORD if buf.len() >= 4 => Some(RegData::Dword(u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]))),
+            REG_DWORD if buf.len() == 4 => Some(RegData::Dword(u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]))),
             REG_SZ => {
                 let wide: Vec<u16> = buf.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-                Some(RegData::Sz(String::from_utf16_lossy(&wide).trim_end_matches('\0').to_string()))
+                let text = String::from_utf16_lossy(&wide).trim_end_matches('\0').to_string();
+                // Only use the text form when writing it back gives the same bytes.
+                let same = text.encode_utf16().chain([0]).flat_map(|u| u.to_le_bytes()).eq(buf.iter().copied());
+                Some(if same { RegData::Sz(text) } else { RegData::Raw { ty: ty.0, data: buf } })
             }
-            // A value of another type is "not our value"; treat it as different but present.
-            _ => Some(RegData::Sz(format!("<type {}>", ty.0))),
+            // Any other type is kept as raw bytes so undo restores it exactly.
+            _ => Some(RegData::Raw { ty: ty.0, data: buf }),
         })
     }
 
@@ -159,6 +162,7 @@ impl Platform for WinPlatform {
         let (ty, data): (REG_VALUE_TYPE, Vec<u8>) = match value {
             RegData::Dword(v) => (REG_DWORD, v.to_le_bytes().to_vec()),
             RegData::Sz(s) => (REG_SZ, s.encode_utf16().chain([0]).flat_map(|u| u.to_le_bytes()).collect()),
+            RegData::Raw { ty, data } => (REG_VALUE_TYPE(*ty), data.clone()),
         };
         win(unsafe { RegSetValueExW(hk.0, &HSTRING::from(name), None, ty, Some(&data)) }, "write registry value")
     }
@@ -409,7 +413,35 @@ impl Platform for WinPlatform {
             Ok(Some(RegData::Sz(s))) => s.trim().to_string(),
             _ => String::new(),
         };
-        Machine { laptop, os_build, cpu }
+        let sets = self.cpu_sets();
+        let split_cache = cpu_target(&sets, CpuPrefer::LargestCache).is_some();
+        let hybrid = cpu_target(&sets, CpuPrefer::PerformanceCores).is_some();
+        Machine { laptop, os_build, cpu, split_cache, hybrid }
+    }
+
+    fn cpu_sets(&self) -> Vec<CpuSet> {
+        static SETS: std::sync::OnceLock<Vec<CpuSet>> = std::sync::OnceLock::new();
+        SETS.get_or_init(read_cpu_sets).clone()
+    }
+
+    fn process_cpu_sets(&self, pid: u32) -> PResult<Vec<u32>> {
+        use ::windows::Win32::System::Threading::GetProcessDefaultCpuSets;
+        let h = open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION)?;
+        let mut ids = vec![0u32; 256];
+        let mut n = 0u32;
+        unsafe { GetProcessDefaultCpuSets(h.0, Some(&mut ids), &mut n) }
+            .ok()
+            .map_err(|e| format!("cannot read the game's CPU cores: {}", e.message()))?;
+        ids.truncate(n as usize);
+        Ok(ids)
+    }
+
+    fn set_process_cpu_sets(&self, pid: u32, ids: &[u32]) -> PResult<()> {
+        use ::windows::Win32::System::Threading::{SetProcessDefaultCpuSets, PROCESS_SET_LIMITED_INFORMATION};
+        let h = open_process(pid, PROCESS_SET_LIMITED_INFORMATION)?;
+        unsafe { SetProcessDefaultCpuSets(h.0, if ids.is_empty() { None } else { Some(ids) }) }
+            .ok()
+            .map_err(|e| format!("cannot choose the game's CPU cores: {}", e.message()))
     }
 
     fn exe_icon(&self, exe_path: &str, size: usize) -> Option<Icon> {
@@ -424,6 +456,75 @@ impl Platform for WinPlatform {
         }
         icon
     }
+}
+
+/// CPU sets with the size of the L3 cache each logical processor uses.
+fn read_cpu_sets() -> Vec<CpuSet> {
+    use ::windows::Win32::System::SystemInformation::{
+        GetLogicalProcessorInformationEx, GetSystemCpuSetInformation, RelationCache, SYSTEM_CPU_SET_INFORMATION,
+        SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX,
+    };
+    // L3 size per (processor group, logical processor index).
+    let mut l3 = std::collections::HashMap::new();
+    unsafe {
+        let mut len = 0u32;
+        let _ = GetLogicalProcessorInformationEx(RelationCache, None, &mut len);
+        // Padded: the last entry may be shorter than the struct it is read through.
+        let mut buf = vec![0u64; (len as usize).div_ceil(8) + 16];
+        if len > 0 && GetLogicalProcessorInformationEx(RelationCache, Some(buf.as_mut_ptr() as *mut SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX), &mut len).is_ok() {
+            let base = buf.as_ptr() as *const u8;
+            let mut off = 0usize;
+            // Entries are as long as their own Size, often shorter than the full union.
+            while off + 8 <= len as usize {
+                let e = &*(base.add(off) as *const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX);
+                if e.Size == 0 {
+                    break;
+                }
+                let c = &e.Anonymous.Cache;
+                if e.Relationship == RelationCache && c.Level == 3 {
+                    let masks = std::slice::from_raw_parts(c.Anonymous.GroupMasks.as_ptr(), c.GroupCount.max(1) as usize);
+                    for m in masks {
+                        for bit in 0..usize::BITS {
+                            if m.Mask & (1usize << bit) != 0 {
+                                l3.insert((m.Group, bit as u8), c.CacheSize / 1024);
+                            }
+                        }
+                    }
+                }
+                off += e.Size as usize;
+            }
+        }
+    }
+    let mut out = Vec::new();
+    unsafe {
+        let mut len = 0u32;
+        let _ = GetSystemCpuSetInformation(None, 0, &mut len, None, None);
+        if len == 0 {
+            return out;
+        }
+        // Padded: the last entry may be shorter than the struct it is read through.
+        let mut buf = vec![0u64; (len as usize).div_ceil(8) + 16];
+        if !GetSystemCpuSetInformation(Some(buf.as_mut_ptr() as *mut SYSTEM_CPU_SET_INFORMATION), len, &mut len, None, None).as_bool() {
+            return out;
+        }
+        let base = buf.as_ptr() as *const u8;
+        let mut off = 0usize;
+        while off + 8 <= len as usize {
+            let e = &*(base.add(off) as *const SYSTEM_CPU_SET_INFORMATION);
+            if e.Size == 0 {
+                break;
+            }
+            let c = &e.Anonymous.CpuSet;
+            out.push(CpuSet {
+                id: c.Id,
+                llc: c.LastLevelCacheIndex,
+                l3_kb: l3.get(&(c.Group, c.LogicalProcessorIndex)).copied().unwrap_or(0),
+                efficiency: c.EfficiencyClass,
+            });
+            off += e.Size as usize;
+        }
+    }
+    out
 }
 
 /// (covers the whole monitor, share of the monitor covered)
@@ -551,7 +652,9 @@ pub fn set_autostart(on: bool) -> PResult<()> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let mut cmd = std::process::Command::new("schtasks");
+    // Full path, so a schtasks.exe next to leanfps.exe (e.g. in Downloads) is never run.
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
+    let mut cmd = std::process::Command::new(std::path::Path::new(&system_root).join("System32").join("schtasks.exe"));
     if on {
         let tr = format!("\"{}\" --tray", exe.display());
         cmd.args(["/Create", "/F", "/TN", "LeanFPS", "/SC", "ONLOGON", "/RL", "HIGHEST", "/TR", &tr]);

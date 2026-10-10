@@ -117,6 +117,8 @@ const NOT_GAMES: &[&str] = &[
     "rockstarlauncher.exe", "socialclubhelper.exe", "xboxpcapp.exe", "gamingservices.exe",
     "blender.exe", "unity.exe", "unrealeditor.exe", "photoshop.exe", "afterfx.exe", "premiere pro.exe",
     "resolve.exe", "nvidia app.exe", "nvcontainer.exe", "radeonsoftware.exe", "msiafterburner.exe",
+    "hyp.exe", "wegame.exe", "ubisoftconnect.exe", "heroic.exe", "playnite.desktopapp.exe", "playnite.fullscreenapp.exe",
+    "amazon games ui.exe", "ealauncher.exe", "launcher.exe", "rtss.exe", "geforcenow.exe", "parsecd.exe", "moonlight.exe",
 ];
 
 /// Genre for a title from our databases: curated list first, then Steam tags.
@@ -321,6 +323,14 @@ mod tests {
         p.rejected.clear();
         p.genres.insert("pixel.exe".into(), Genre::Racing);
         assert_eq!(info(run(exe, false, 0.2, None, &[], &p)).genre, Some(Genre::Racing));
+    }
+
+    #[test]
+    fn builtin_steam_genre_table_is_filled() {
+        let t = SteamGenres::builtin();
+        assert!(t.len() > 3000, "data/steam_genres.tsv has only {} games", t.len());
+        assert_eq!(t.by_appid(578080), Some(Genre::Shooter));
+        assert_eq!(t.by_name("Cyberpunk 2077"), Some(Genre::OpenWorld));
     }
 
     #[test]

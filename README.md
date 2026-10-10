@@ -12,16 +12,33 @@ will live in `Jamailar/Sites` under `sites/leanfps/`.
 ## What it does
 
 - **System tweaks** (persistent): power plan, core parking, Game Mode, background recording,
-  plus advanced opt-ins (HAGS, MPO). The real previous value is saved before every change and
+  Windows 11 optimizations for windowed games, plus advanced opt-ins (HAGS, MPO). The real previous value is saved before every change and
   restored on undo, one tweak at a time or all at once.
 - **While gaming** (session): when a game is in the foreground LeanFPS raises its priority,
-  opts it out of power throttling, keeps the PC awake and lowers background apps. Everything
+  opts it out of power throttling, keeps the PC awake and lowers background apps. On Ryzen
+  X3D CPUs with two dies the game runs on the V-Cache die (Windows CPU sets). Everything
   is undone when the game exits, and after a crash on the next start.
 - **Game profiles**: the game is identified (built-in database, Steam and Epic libraries,
   or fullscreen fallback), its icon is shown, and genre-specific tweaks run (e.g. mouse
   acceleration off for shooters, standby-memory purge for open-world games).
 - Never: Defender, HVCI/VBS, firewall, Windows Update, CPU mitigations, game injection or
   overlays.
+
+## Safety rules
+
+- **Record first, then modify.** Every change reads the current value and writes it to the
+  undo journal on disk (flushed) before touching the system. If the journal can't be saved,
+  nothing is changed. If a change fails half-way, what was done is undone.
+- **Nothing is forgotten.** A value that can't be restored stays in the journal (or
+  `session.json`) and is retried by the next start or **Restore all**. A journal file that
+  can't be read is moved aside as `*.corrupt-<time>`, never overwritten.
+- **Exact restore.** Registry values of any type are restored byte for byte.
+- **No files, no drives.** LeanFPS never deletes or edits user files. It only writes its own
+  JSON files in its data folder. No disk cleanup, no driver or service changes.
+- **No freezes.** Priority goes up to High at most, never Realtime. Windows processes
+  (`dwm.exe`, `csrss.exe`, `audiodg.exe`, `explorer.exe`, ...) are never slowed down; the
+  catalog is rejected if it lists one. Mouse changes live in memory only, so a reboot always
+  resets them.
 
 ## Layout
 
@@ -72,7 +89,8 @@ Data goes to `%ProgramData%\LeanFPS` (override with `LEANFPS_DATA_DIR`).
 
 Undo everything at any time with the **Restore all** button or `leanfps.exe --restore-all`.
 Settings and the undo journal are in `C:\ProgramData\LeanFPS`. Do not run `--selftest` on your
-own PC: it is meant for throwaway test machines.
+own PC: it is meant for throwaway test machines and refuses to run unless `CI=true` or
+`LEANFPS_SELFTEST=1` is set.
 
 Command line:
 

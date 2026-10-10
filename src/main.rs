@@ -46,7 +46,10 @@ fn restore_all() -> i32 {
     let session_errs = session::recover(&*pf, &store);
     let mut engine = engine::Engine::new(catalog::Catalog::builtin(), pf, store.clone());
     #[cfg(windows)]
-    let _ = platform::win::set_autostart(false);
+    {
+        let _ = platform::win::set_autostart(false);
+        frames::stop_leftover();
+    }
     let mut errs = engine.revert_all();
     errs.extend(pergame::PerGame::load(&store).revert_all(&*engine.pf).into_iter().map(|e| ("per-game".to_string(), e)));
     let mut cfg: config::Config = store.load("config.json").unwrap_or_default();
