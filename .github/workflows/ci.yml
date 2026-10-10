@@ -22,12 +22,13 @@ jobs:
       - name: Release build
         run: cargo build --release --locked
 
-      - name: Size budget (fail above 8 MB, product limit is 20 MB)
+      # 12 MB since the Direct3D 12 fallback renderer (about 3 MB) for PCs without OpenGL.
+      - name: Size budget (fail above 12 MB, product limit is 20 MB)
         shell: pwsh
         run: |
           $size = (Get-Item target/release/leanfps.exe).Length
           "leanfps.exe: {0:N2} MB" -f ($size / 1MB)
-          if ($size -gt 8MB) { throw "leanfps.exe is over the 8 MB budget" }
+          if ($size -gt 12MB) { throw "leanfps.exe is over the 12 MB budget" }
 
       # The runner VM is thrown away afterwards and runs as administrator, so the real
       # tweaks can be applied, verified and reverted here.
@@ -50,7 +51,57 @@ jobs:
           "alive: $alive  exit: $(if (-not $alive) { $p.ExitCode })  hwnd: $($p.MainWindowHandle)  title: '$($p.MainWindowTitle)'"
           Get-Content "$env:ProgramData\LeanFPS\leanfps.log" -ErrorAction SilentlyContinue
           if ($alive) { Stop-Process -Id $p.Id -Force }
-          if (-not $alive -or $p.MainWindowHandle -eq 0 -or $p.MainWindowTitle -ne 'LeanFPS') { throw "no LeanFPS window after a plain launch" }
+          # The error dialog is also titled LeanFPS, so check the log too.
+          $failed = Select-String -Path "$env:ProgramData\LeanFPS\leanfps.log" -Pattern "could not open|crashed" -Quiet -ErrorAction SilentlyContinue
+          if ($failed -or -not $alive -or $p.MainWindowHandle -eq 0 -or $p.MainWindowTitle -ne 'LeanFPS') { throw "no LeanFPS window after a plain launch" }
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $find = { Get-ChildItem "${env:ProgramFiles(x86)}\Inno Setup *\ISCC.exe", "$env:ProgramFiles\Inno Setup *\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 }
+          $iscc = & $find
+          if (-not $iscc) { choco install innosetup -y --no-progress | Out-Null; $iscc = & $find }
+          if (-not $iscc) { throw "Inno Setup not found" }
+          "using $($iscc.FullName)"
+          $iscc = $iscc.FullName
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          & $iscc /Qp "/DAppVersion=$version" installer\leanfps.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          Get-ChildItem target\installer
+
+      # Install like a user would, then open LeanFPS from its Start menu entry.
+      - name: Installer creates shortcuts and the Start menu entry opens the window
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem target\installer\LeanFPS-Setup-*.exe)[0].FullName
+          $p = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=setup.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content setup.log; throw "setup failed with $($p.ExitCode)" }
+          $desktop = Join-Path $env:PUBLIC "Desktop\LeanFPS.lnk"
+          $start = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\LeanFPS.lnk"
+          "desktop shortcut: $(Test-Path $desktop)  start menu: $(Test-Path $start)"
+          if (-not (Test-Path $desktop)) { throw "no desktop shortcut" }
+          if (-not (Test-Path $start)) { throw "no Start menu entry" }
+          Remove-Item "$env:ProgramData\LeanFPS\leanfps.log" -ErrorAction SilentlyContinue
+          Start-Process -FilePath $start
+          Start-Sleep -Seconds 15
+          $app = Get-Process leanfps -ErrorAction SilentlyContinue | Select-Object -First 1
+          Get-Content "$env:ProgramData\LeanFPS\leanfps.log" -ErrorAction SilentlyContinue
+          if (-not $app) { throw "LeanFPS is not running after opening it from the Start menu" }
+          $failed = Select-String -Path "$env:ProgramData\LeanFPS\leanfps.log" -Pattern "could not open|crashed" -Quiet -ErrorAction SilentlyContinue
+          "path: $($app.Path)  hwnd: $($app.MainWindowHandle)  title: '$($app.MainWindowTitle)'"
+          Stop-Process -Id $app.Id -Force
+          if ($failed -or $app.MainWindowTitle -ne 'LeanFPS') { throw "no LeanFPS window after opening it from the Start menu" }
+
+      - name: Uninstall restores settings and removes the program
+        shell: pwsh
+        run: |
+          $uninst = "${env:ProgramFiles}\LeanFPS\unins000.exe"
+          $p = Start-Process -FilePath $uninst -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "uninstall failed with $($p.ExitCode)" }
+          Start-Sleep -Seconds 3
+          if (Test-Path "${env:ProgramFiles}\LeanFPS\leanfps.exe") { throw "leanfps.exe left behind" }
+          if (Test-Path (Join-Path $env:PUBLIC "Desktop\LeanFPS.lnk")) { throw "desktop shortcut left behind" }
+          Get-Content "$env:ProgramData\LeanFPS\leanfps.log" -ErrorAction SilentlyContinue
 
       - name: Restore-all leaves nothing behind
         shell: pwsh
@@ -62,4 +113,10 @@ jobs:
         with:
           name: leanfps-windows-unsigned
           path: target/release/leanfps.exe
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leanfps-setup-unsigned
+          path: target/installer/LeanFPS-Setup-*.exe
           retention-days: 14

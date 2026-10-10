@@ -125,12 +125,24 @@ fn run_window(hidden: bool) {
     if always_on_top {
         viewport = viewport.with_window_level(eframe::egui::WindowLevel::AlwaysOnTop);
     }
-    let options = eframe::NativeOptions { viewport, ..Default::default() };
-
-    let result = eframe::run_native(
-        "LeanFPS",
-        options,
+    // Moved into the app by whichever renderer gets as far as creating it.
+    let once = Arc::new(Mutex::new(Some((engine, rx, tx))));
+    let make_app = move || -> eframe::AppCreator<'static> {
+        let (pf, catalog, config, shared, store, per_game, once, watcher_slot, licenses) = (
+            pf.clone(),
+            catalog.clone(),
+            config.clone(),
+            shared.clone(),
+            store.clone(),
+            per_game.clone(),
+            once.clone(),
+            watcher_slot.clone(),
+            licenses.clone(),
+        );
         Box::new(move |cc| {
+            let Some((engine, rx, tx)) = once.lock().unwrap().take() else {
+                return Err("the window was already created once".into());
+            };
             let ctx = cc.egui_ctx.clone();
             let w = watcher::Watcher {
                 pf: pf.clone(),
@@ -158,8 +170,20 @@ fn run_window(hidden: bool) {
             let h = std::thread::Builder::new().name("watcher".into()).spawn(move || w.run(rx)).expect("start watcher");
             *watcher_slot.lock().unwrap() = Some(h);
             Ok(Box::new(ui::App::new(cc, engine, games::GameDb::builtin(), config, shared, store, per_game, tx, licenses)))
-        }),
-    );
+        })
+    };
+
+    // OpenGL first: smallest memory use. Some PCs have no usable OpenGL driver (virtual
+    // machines, some ARM laptops, Remote Desktop, a missing graphics driver); there Direct3D 12
+    // still works, on the GPU or on Windows' software rasterizer.
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut result = eframe::run_native("LeanFPS", eframe::NativeOptions { viewport: viewport.clone(), renderer: eframe::Renderer::Glow, ..Default::default() }, make_app());
+    #[cfg(windows)]
+    if let Err(e) = &result {
+        log_line(&format!("OpenGL window failed ({e}); trying Direct3D 12"));
+        let options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, ..Default::default() };
+        result = eframe::run_native("LeanFPS", options, make_app());
+    }
     if let Err(e) = result {
         let msg = format!("LeanFPS could not open its window: {e}");
         log_line(&msg);
