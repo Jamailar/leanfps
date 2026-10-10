@@ -1,5 +1,5 @@
 // Writes the test fixture for src/license.rs: a license file signed exactly the way the
-// gateway signs (ArtiSalesBackend desktop-license-sdk), with a throwaway key.
+// license server signs, with a throwaway key.
 // Usage: node tools/license_fixture.mjs
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { writeFileSync } from 'node:fs';

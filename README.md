@@ -3,11 +3,7 @@
 Tiny game performance optimizer for Windows 10/11, written in Rust. One ~6 MB executable,
 no installer, no .NET, no WebView.
 
-Plan and decisions: `docs/plan.md` (Chinese). Competitor teardown:
-`docs/research-radiant-optimizer.md`.
-
-History before 2026-10-09 was imported from `Jamailar/Sites` (`apps/leanfps`). The website
-will live in `Jamailar/Sites` under `sites/leanfps/`.
+How it compares with other optimizers: `docs/comparison.md` (Chinese).
 
 ## What it does
 
@@ -121,15 +117,14 @@ fullscreen fallback instead.
 
 ## Status
 
-See the milestone table in the plan. Done: engine, catalog, detection, sessions, window,
+Done: engine, catalog, detection, sessions, window,
 selftest, CI, Pro license key activation. Next: frametime measurement (ETW), code signing.
 
 ## Pro license
 
 Pro is a one-time purchase on https://leanfps.com/pro/. The buyer gets a key by email and
 enters it with **Enter key** (footer) or *Settings > License*. `src/license.rs` activates it
-through the shared gateway's desktop license API (`https://api.hyperchaos.dev/leanfps/v1/licenses/...`,
-see `desktop-license-sdk` in ArtiSalesBackend) and saves the signed file as `license.json` in
+through the license server (`https://api.hyperchaos.dev/leanfps/v1/licenses/...`) and saves the signed file as `license.json` in
 the data folder. Every start verifies it offline (Ed25519, public keys in `PUBLIC_KEYS`);
 a background refresh runs when the file asks for one. Network errors never remove the file;
 only a definite refusal from the server (refunded, device removed) does.
@@ -143,3 +138,7 @@ Sources are SVG in `res/icon/` (`app.svg` large, `app-small.svg` for 16-32 px, `
 
 The window uses Inter (SIL Open Font License, `res/fonts/OFL.txt`), subset to Latin to keep
 the exe small. Window preview in both themes: `docs/ui-preview.png`.
+
+## License
+
+MIT, see `LICENSE`. The Inter fonts in `res/fonts/` are under the SIL Open Font License.
