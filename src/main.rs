@@ -80,7 +80,19 @@ fn run_window(hidden: bool) {
     let pf: Arc<dyn platform::Platform> = Arc::from(platform::native());
     let store = store::Store::default_location();
     let catalog = catalog::Catalog::builtin();
-    let config = Arc::new(Mutex::new(store.load::<config::Config>("config.json").unwrap_or_default()));
+    let licenses = Arc::new(license::Licenses {
+        store: store.clone(),
+        transport: license::transport(),
+        keys: license::PUBLIC_KEYS,
+        device: license::device_info(&*pf),
+        app_version: env!("CARGO_PKG_VERSION"),
+        now: license::now_secs,
+    });
+    let mut cfg = store.load::<config::Config>("config.json").unwrap_or_default();
+    // Checked offline from the signed file before the watcher starts, so the first game
+    // already gets the right tweaks.
+    cfg.pro = licenses.state().is_pro() || license::dev_pro();
+    let config = Arc::new(Mutex::new(cfg));
     let shared = Arc::new(Mutex::new(watcher::Shared::default()));
     let engine = engine::Engine::new(catalog.clone(), pf.clone(), store.clone());
     let per_game = Arc::new(Mutex::new(pergame::PerGame::load(&store)));
@@ -134,7 +146,7 @@ fn run_window(hidden: bool) {
             }
             let h = std::thread::Builder::new().name("watcher".into()).spawn(move || w.run(rx)).expect("start watcher");
             *watcher_slot.lock().unwrap() = Some(h);
-            Ok(Box::new(ui::App::new(cc, engine, games::GameDb::builtin(), config, shared, store, per_game, tx)))
+            Ok(Box::new(ui::App::new(cc, engine, games::GameDb::builtin(), config, shared, store, per_game, tx, licenses)))
         }),
     );
     if let Err(e) = result {

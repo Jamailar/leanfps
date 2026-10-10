@@ -1,0 +1,24 @@
+{
+  "payload": {
+    "v": 1,
+    "typ": "app-license",
+    "app": "leanfps",
+    "lid": "lic-1",
+    "aid": "act-1",
+    "plan": "pro",
+    "plan_name": "LeanFPS Pro",
+    "email_hint": "p***@example.com",
+    "device": "b725ad4d1cb48afe23b28cf9d0f7feaa30d7c4a3faa86544252c22bc0d86b6e4",
+    "seats": 3,
+    "max_major": 1,
+    "features": {
+      "note": "é \"quoted\"\n"
+    },
+    "iat": 1791504000,
+    "refresh_after": 1792108800,
+    "exp": 1794096000
+  },
+  "kid": "lic-test",
+  "alg": "Ed25519",
+  "sig": "BiAy4NJKuseksneUm9AlrZgmOPQpIGK68oYe_nXyP_8eC7InY6IIbUMomGjS1BBS7y3zPUWo_L-SzIv3AddSDA"
+}

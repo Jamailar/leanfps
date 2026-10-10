@@ -669,3 +669,57 @@ pub fn set_autostart(on: bool) -> PResult<()> {
         Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
     }
 }
+
+/// HTTPS POST of a JSON body with WinHTTP (built into Windows, so no TLS library in the exe).
+/// Only `https://` URLs; uses the system proxy settings. Returns (status, body).
+pub fn https_post_json(url: &str, body: &str) -> Result<(u16, String), String> {
+    use ::windows::Win32::Networking::WinHttp::*;
+    struct Internet(*mut c_void);
+    impl Drop for Internet {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = WinHttpCloseHandle(self.0);
+            }
+        }
+    }
+    let open = |h: *mut c_void, what: &str| if h.is_null() { Err(format!("{what} failed")) } else { Ok(Internet(h)) };
+    let rest = url.strip_prefix("https://").ok_or("only https is allowed")?;
+    let (host, path) = rest.split_once('/').map(|(h, p)| (h, format!("/{p}"))).unwrap_or((rest, "/".into()));
+    let agent = HSTRING::from(format!("LeanFPS/{}", env!("CARGO_PKG_VERSION")));
+    unsafe {
+        let session = open(WinHttpOpen(&agent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, PCWSTR::null(), PCWSTR::null(), 0), "network setup")?;
+        let _ = WinHttpSetTimeouts(session.0, 10_000, 10_000, 15_000, 20_000);
+        let connect = open(WinHttpConnect(session.0, &HSTRING::from(host), INTERNET_DEFAULT_HTTPS_PORT, 0), "connect")?;
+        let request = open(
+            WinHttpOpenRequest(connect.0, &HSTRING::from("POST"), &HSTRING::from(path), PCWSTR::null(), PCWSTR::null(), std::ptr::null(), WINHTTP_FLAG_SECURE),
+            "request",
+        )?;
+        let headers: Vec<u16> = "Content-Type: application/json\r\nAccept: application/json\r\n".encode_utf16().collect();
+        let data = body.as_bytes();
+        WinHttpSendRequest(request.0, Some(&headers), Some(data.as_ptr() as *const c_void), data.len() as u32, data.len() as u32, 0)
+            .map_err(|e| format!("could not reach the server ({})", e.code().0))?;
+        WinHttpReceiveResponse(request.0, std::ptr::null_mut()).map_err(|e| format!("no answer from the server ({})", e.code().0))?;
+        let mut status = 0u32;
+        let mut len = std::mem::size_of::<u32>() as u32;
+        WinHttpQueryHeaders(
+            request.0,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            PCWSTR::null(),
+            Some(&mut status as *mut u32 as *mut c_void),
+            &mut len,
+            std::ptr::null_mut(),
+        )
+        .map_err(|e| format!("bad answer from the server ({})", e.code().0))?;
+        let mut out = Vec::new();
+        loop {
+            let mut buf = [0u8; 8192];
+            let mut read = 0u32;
+            WinHttpReadData(request.0, buf.as_mut_ptr() as *mut c_void, buf.len() as u32, &mut read).map_err(|e| format!("connection lost ({})", e.code().0))?;
+            if read == 0 || out.len() > 1 << 20 {
+                break;
+            }
+            out.extend_from_slice(&buf[..read as usize]);
+        }
+        Ok((status as u16, String::from_utf8_lossy(&out).into_owned()))
+    }
+}

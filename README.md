@@ -113,8 +113,18 @@ fullscreen fallback instead.
 ## Status
 
 See the milestone table in the plan. Done: engine, catalog, detection, sessions, window,
-selftest, CI. Next: tray + autostart, frametime measurement (ETW), license and purchase flow
-via the shared gateway, website, code signing.
+selftest, CI, Pro license key activation. Next: frametime measurement (ETW), code signing.
+
+## Pro license
+
+Pro is a one-time purchase on https://leanfps.com/pro/. The buyer gets a key by email and
+enters it with **Enter key** (footer) or *Settings > License*. `src/license.rs` activates it
+through the shared gateway's desktop license API (`https://api.hyperchaos.dev/leanfps/v1/licenses/...`,
+see `desktop-license-sdk` in ArtiSalesBackend) and saves the signed file as `license.json` in
+the data folder. Every start verifies it offline (Ed25519, public keys in `PUBLIC_KEYS`);
+a background refresh runs when the file asks for one. Network errors never remove the file;
+only a definite refusal from the server (refunded, device removed) does.
+`tools/license_fixture.mjs` regenerates the signed test fixture.
 
 ## Icons
 
