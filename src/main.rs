@@ -30,6 +30,18 @@ fn main() {
     if !args.is_empty() {
         attach_console();
     }
+    // A windowed release build has no console, so a panic or a failed window would vanish
+    // without a trace. Keep a short log in the data folder and tell the user where it is.
+    let windowed = matches!(args.first().map(String::as_str), None | Some("--tray"));
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = format!("crashed: {info}");
+        log_line(&msg);
+        eprintln!("{msg}");
+        if windowed {
+            fatal_box(&msg);
+        }
+    }));
+    log_line(&format!("LeanFPS {} started {:?}", env!("CARGO_PKG_VERSION"), args));
     match args.first().map(String::as_str) {
         None => run_window(false),
         Some("--tray") => run_window(true),
@@ -72,9 +84,8 @@ fn restore_all() -> i32 {
 fn run_window(hidden: bool) {
     #[cfg(windows)]
     if !platform::win::single_instance() {
-        if !tray::wake_existing() {
-            platform::win::focus_existing_window();
-        }
+        let woke = tray::wake_existing() || platform::win::focus_existing_window();
+        log_line(&format!("already running; asked it to show its window: {woke}"));
         return;
     }
     let pf: Arc<dyn platform::Platform> = Arc::from(platform::native());
@@ -150,12 +161,43 @@ fn run_window(hidden: bool) {
         }),
     );
     if let Err(e) = result {
-        eprintln!("LeanFPS could not open its window: {e}");
+        let msg = format!("LeanFPS could not open its window: {e}");
+        log_line(&msg);
+        eprintln!("{msg}");
+        fatal_box(&msg);
     }
     let handle = watcher_thread.lock().unwrap().take();
     if let Some(h) = handle {
         let _ = h.join();
     }
+}
+
+/// Append one line to `leanfps.log` in the data folder (best effort, never fails).
+fn log_line(msg: &str) {
+    use std::io::Write;
+    let path = store::Store::default_location().path("leanfps.log");
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // Keep the log small: start over once it passes 256 KB.
+    if std::fs::metadata(&path).map(|m| m.len() > 256 * 1024).unwrap_or(false) {
+        let _ = std::fs::remove_file(&path);
+    }
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "[{secs}] {msg}");
+    }
+}
+
+/// Show a startup failure to the user instead of exiting silently.
+fn fatal_box(msg: &str) {
+    #[cfg(windows)]
+    {
+        let log = store::Store::default_location().path("leanfps.log");
+        platform::win::message_box("LeanFPS", &format!("{msg}\n\nDetails are in {}", log.display()));
+    }
+    #[cfg(not(windows))]
+    let _ = msg;
 }
 
 fn attach_console() {

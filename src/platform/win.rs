@@ -635,15 +635,25 @@ pub fn open_url(url: &str) {
     }
 }
 
+/// A plain error dialog, for failures that happen before (or instead of) the window.
+pub fn message_box(title: &str, text: &str) {
+    use ::windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+    unsafe {
+        MessageBoxW(None, &HSTRING::from(text), &HSTRING::from(title), MB_OK | MB_ICONERROR);
+    }
+}
+
 /// Bring the already-running LeanFPS window to the front.
-pub fn focus_existing_window() {
+pub fn focus_existing_window() -> bool {
     use ::windows::Win32::UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE};
     if let Ok(hwnd) = unsafe { FindWindowW(PCWSTR::null(), &HSTRING::from("LeanFPS")) } {
         unsafe {
             let _ = ShowWindow(hwnd, SW_RESTORE);
             let _ = SetForegroundWindow(hwnd);
         }
+        return true;
     }
+    false
 }
 
 /// Start LeanFPS at sign-in, elevated and hidden in the tray, via Task Scheduler

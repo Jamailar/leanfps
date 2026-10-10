@@ -38,6 +38,20 @@ jobs:
           Get-Content leanfps-selftest.log
           if ($p.ExitCode -ne 0) { throw "selftest failed with exit code $($p.ExitCode)" }
 
+      # What a user sees when they double-click: the process must stay up and show a window.
+      - name: Window opens on a plain launch
+        shell: pwsh
+        run: |
+          Remove-Item "$env:ProgramData\LeanFPS\leanfps.log" -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath target/release/leanfps.exe -PassThru
+          Start-Sleep -Seconds 15
+          $p.Refresh()
+          $alive = -not $p.HasExited
+          "alive: $alive  exit: $(if (-not $alive) { $p.ExitCode })  hwnd: $($p.MainWindowHandle)  title: '$($p.MainWindowTitle)'"
+          Get-Content "$env:ProgramData\LeanFPS\leanfps.log" -ErrorAction SilentlyContinue
+          if ($alive) { Stop-Process -Id $p.Id -Force }
+          if (-not $alive -or $p.MainWindowHandle -eq 0 -or $p.MainWindowTitle -ne 'LeanFPS') { throw "no LeanFPS window after a plain launch" }
+
       - name: Restore-all leaves nothing behind
         shell: pwsh
         run: |
