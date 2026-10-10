@@ -33,6 +33,9 @@ pub struct Config {
     pub theme: String,
     /// The main window lists every optimization, not just the preset picker.
     pub show_all_settings: bool,
+    /// The main switch is off: nothing is applied and every change is undone, but the preset
+    /// and the user's own choices are kept for when it goes back on.
+    pub paused: bool,
 }
 
 impl Default for Config {
@@ -51,6 +54,7 @@ impl Default for Config {
             start_with_windows: false,
             theme: "system".into(),
             show_all_settings: false,
+            paused: false,
         }
     }
 }
@@ -98,9 +102,9 @@ impl Config {
         }
     }
 
-    /// Wanted and allowed by the current tier.
+    /// Wanted, allowed by the current tier, and the main switch is on.
     pub fn active(&self, t: &Tweak) -> bool {
-        self.wants(t) && (!t.pro || self.tier() != Tier::Free)
+        !self.paused && self.wants(t) && (!t.pro || self.tier() != Tier::Free)
     }
 }
 
@@ -133,5 +137,11 @@ mod tests {
         assert!(!serde_json::from_str::<Config>(&saved).unwrap().pro, "Pro is never read from the settings file");
         c.set_preset("competitive");
         assert!(!c.is_custom());
+        c.set_wanted(hags, true);
+        c.paused = true;
+        assert!(!c.active(dvr) && !c.active(hags), "main switch off: nothing is active");
+        assert!(c.wants(dvr) && c.wants(hags), "but the choices are kept");
+        c.paused = false;
+        assert!(c.active(hags) && c.is_custom());
     }
 }
