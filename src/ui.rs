@@ -178,7 +178,9 @@ pub struct App {
     license: LicenseState,
     license_tx: Sender<LicenseEvent>,
     license_rx: std::sync::mpsc::Receiver<LicenseEvent>,
-    license_checked: Instant,
+    /// `None` until the first check. Not `now - LICENSE_CHECK`: on Windows an `Instant` counts
+    /// from boot, so that subtraction panics when the PC has been up less than six hours.
+    license_checked: Option<Instant>,
     activation: Option<Activation>,
 }
 
@@ -259,7 +261,7 @@ impl App {
             license_tx,
             license_rx,
             // Due right away, so a file that asks for a refresh gets one at start.
-            license_checked: Instant::now() - LICENSE_CHECK,
+            license_checked: None,
             activation: None,
         }
     }
@@ -290,8 +292,8 @@ impl App {
     }
 
     fn license_events(&mut self, ctx: &egui::Context) {
-        if self.license_checked.elapsed() >= LICENSE_CHECK && self.license.payload().is_some() {
-            self.license_checked = Instant::now();
+        if self.license_checked.is_none_or(|t| t.elapsed() >= LICENSE_CHECK) && self.license.payload().is_some() {
+            self.license_checked = Some(Instant::now());
             self.license_job(ctx, |l| LicenseEvent::Refreshed(l.refresh_if_due(false)));
         }
         while let Ok(ev) = self.license_rx.try_recv() {
