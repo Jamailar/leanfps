@@ -188,9 +188,20 @@ pub struct ApiError {
 }
 
 /// Answers that mean the stored file must stop working (as opposed to "try again later").
+///
+/// Not `LICENSE_FILE_INVALID`: the stored file already verified against a key compiled into
+/// this build, so that answer means the server lost its signing key (a node rebuilt or a
+/// database restored), not that the buyer did anything. Not a file the server sent that this
+/// build can't check either (a rotated signing key, a PC clock that is far off): both keep the
+/// current file working until it expires.
 pub fn is_definite_refusal(code: &str) -> bool {
-    matches!(code, "LICENSE_REVOKED" | "LICENSE_SUSPENDED" | "LICENSE_DEVICE_REMOVED" | "LICENSE_DEVICE_MISMATCH" | "LICENSE_FILE_INVALID")
+    matches!(code, "LICENSE_REVOKED" | "LICENSE_SUSPENDED" | "LICENSE_DEVICE_REMOVED" | "LICENSE_DEVICE_MISMATCH")
 }
+
+/// A file from the server that failed the checks here; `errors` holds why.
+pub const FILE_UNVERIFIED: &str = "FILE_UNVERIFIED";
+/// `license.json` could not be written.
+pub const SAVE_FAILED: &str = "SAVE_FAILED";
 
 impl ApiError {
     pub fn network(detail: String) -> ApiError {
@@ -209,7 +220,10 @@ impl ApiError {
             "LICENSE_SUSPENDED" => "This license is suspended. Email contact@leanfps.com.",
             "LICENSE_DEVICE_REMOVED" | "LICENSE_DEVICE_MISMATCH" => "This PC was removed from the license. Activate it again with your key.",
             "LICENSE_TOO_MANY_ATTEMPTS" => "Too many attempts. Wait an hour and try again.",
-            "LICENSE_FILE_INVALID" => "The license server sent a file this version can't check. Update LeanFPS and try again.",
+            "LICENSE_FILE_INVALID" => "The license server couldn't read this PC's license. Enter your key again, or email contact@leanfps.com.",
+            FILE_UNVERIFIED if self.errors == json!("clock") => "Your PC's date and time look wrong. Set them correctly in Windows Settings, then try again.",
+            FILE_UNVERIFIED => "The license server sent a license this version of LeanFPS can't check. Update LeanFPS and try again.",
+            SAVE_FAILED => "LeanFPS couldn't save the license on this PC. Restart LeanFPS and try again.",
             _ if self.status == 429 => "Too many attempts. Wait a few minutes and try again.",
             _ if self.status >= 500 => "The license server had a problem. Try again in a few minutes.",
             _ => "Activation failed. Check the key and email, or email contact@leanfps.com.",
@@ -278,19 +292,20 @@ impl Licenses {
     }
 
     fn accept(&self, data: &Value) -> Result<State, ApiError> {
-        let file: LicenseFile = serde_json::from_value(data["license_file"].clone()).map_err(|_| self.bad_file())?;
+        let unverified = |why: &str| ApiError { status: 0, code: FILE_UNVERIFIED.into(), errors: json!(why) };
+        let file: LicenseFile = serde_json::from_value(data["license_file"].clone()).map_err(|_| unverified("format"))?;
         // Never trust the network blindly: the file must verify against the pinned keys and
         // belong to this PC before it replaces anything.
         let state = evaluate(Some(&file), self.keys, &self.device.fingerprint, self.app_version, (self.now)());
-        if !state.is_pro() {
-            return Err(self.bad_file());
+        match &state {
+            State::Valid { .. } => {}
+            // Just signed by the server, yet already expired here: this PC's clock is ahead.
+            State::Invalid { reason: Invalid::Expired, .. } => return Err(unverified("clock")),
+            State::Invalid { reason, .. } => return Err(unverified(&format!("{reason:?}"))),
+            State::None => return Err(unverified("format")),
         }
-        self.store.save(FILE, &file).map_err(ApiError::network)?;
+        self.store.save(FILE, &file).map_err(|e| ApiError { status: 0, code: SAVE_FAILED.into(), errors: Value::String(e) })?;
         Ok(state)
-    }
-
-    fn bad_file(&self) -> ApiError {
-        ApiError { status: 0, code: "LICENSE_FILE_INVALID".into(), errors: Value::Null }
     }
 
     pub fn activate(&self, key: &str, email: &str) -> Result<State, ApiError> {
@@ -509,7 +524,7 @@ mod tests {
         other.payload["seats"] = json!(5);
         REPLY.with(|r| *r.borrow_mut() = (200, json!({ "license_file": other }).to_string()));
         let l = licenses(fake);
-        assert_eq!(l.activate("k", "e").unwrap_err().code, "LICENSE_FILE_INVALID");
+        assert_eq!(l.activate("k", "e").unwrap_err().code, FILE_UNVERIFIED);
         assert!(l.file().is_none(), "an unverified file is never written");
 
         REPLY.with(|r| *r.borrow_mut() = (403, json!({ "code": "LICENSE_NOT_FOUND", "message": "授权码或邮箱不对" }).to_string()));
@@ -536,6 +551,34 @@ mod tests {
         assert!(l.refresh_if_due(true).unwrap().is_pro(), "server trouble keeps the license");
     }
 
+    #[test]
+    fn refresh_keeps_the_file_when_the_server_cannot_be_trusted_or_checked() {
+        // The server lost its signing key and no longer recognises the file.
+        let l = licenses(fake);
+        l.store.save(FILE, &fixture()).unwrap();
+        REPLY.with(|r| *r.borrow_mut() = (400, json!({ "code": "LICENSE_FILE_INVALID" }).to_string()));
+        assert!(l.refresh_if_due(true).unwrap().is_pro());
+        assert_eq!(l.file(), Some(fixture()));
+
+        // The server rotated its signing key: the new file has a kid this build doesn't know.
+        let mut rotated = fixture();
+        rotated.kid = "lic-20991231-000000".into();
+        REPLY.with(|r| *r.borrow_mut() = (200, json!({ "license_file": rotated }).to_string()));
+        assert!(l.refresh_if_due(true).unwrap().is_pro());
+        assert_eq!(l.file(), Some(fixture()), "the old file keeps working until it expires");
+    }
+
+    #[test]
+    fn a_clock_far_ahead_is_named_on_activation() {
+        let mut l = licenses(fake);
+        l.now = || IAT + 400 * 86_400;
+        REPLY.with(|r| *r.borrow_mut() = (200, json!({ "license_file": fixture() }).to_string()));
+        let e = l.activate("k", "e").unwrap_err();
+        assert_eq!(e.code, FILE_UNVERIFIED);
+        assert!(e.message().contains("date and time"), "{}", e.message());
+        assert!(l.file().is_none());
+    }
+
     /// WinHTTP end to end against the real license server: TLS, proxy, POST body, status and
     /// JSON error body. Runs on the Windows CI runner.
     #[cfg(windows)]
@@ -545,6 +588,32 @@ mod tests {
         assert!((400..500).contains(&status), "status {status}: {body}");
         let v: Value = serde_json::from_str(&body).expect("JSON error body");
         assert!(v.get("code").is_some(), "{body}");
+    }
+
+    /// The whole flow against the live license server with a real key and the shipped public
+    /// keys: activate, refresh, deactivate. Run by hand with a test key:
+    /// `LEANFPS_TEST_KEY=... LEANFPS_TEST_EMAIL=... cargo test live_license_round_trip -- --ignored`
+    #[test]
+    #[ignore]
+    fn live_license_round_trip() {
+        let (key, email) = (std::env::var("LEANFPS_TEST_KEY").unwrap(), std::env::var("LEANFPS_TEST_EMAIL").unwrap());
+        let l = Licenses {
+            store: Store::temp(),
+            transport: transport(),
+            keys: PUBLIC_KEYS,
+            device: DeviceInfo { fingerprint: format!("test:{}", now_secs()), name: "LeanFPS live test".into(), os_version: "10.0.26100".into() },
+            app_version: env!("CARGO_PKG_VERSION"),
+            now: now_secs,
+        };
+        let state = l.activate(&key, &email).expect("activate");
+        let p = state.payload().unwrap().clone();
+        assert!(state.is_pro() && p.app == APP_SLUG && p.plan == "pro", "{state:?}");
+        assert_eq!(l.state(), state, "the saved file verifies offline");
+        // Same PC again (a reinstall) reuses its seat.
+        assert!(l.activate(&key, &email).unwrap().is_pro());
+        assert!(l.refresh_if_due(true).expect("refresh").is_pro());
+        assert_eq!(l.deactivate(), Ok(()));
+        assert_eq!(l.state(), State::None);
     }
 
     #[test]
