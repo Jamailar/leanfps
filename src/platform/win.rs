@@ -19,7 +19,7 @@ use ::windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
     HKEY_LOCAL_MACHINE, KEY_READ, KEY_SET_VALUE, REG_DWORD, REG_OPTION_NON_VOLATILE, REG_SZ, REG_VALUE_TYPE,
 };
-use ::windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+use ::windows::Win32::System::SystemInformation::{GetSystemInfo, GlobalMemoryStatusEx, MEMORYSTATUSEX, SYSTEM_INFO};
 use ::windows::Win32::System::Threading::{
     GetCurrentProcess, GetExitCodeProcess, GetPriorityClass, OpenProcess, OpenProcessToken, ProcessPowerThrottling, QueryFullProcessImageNameW,
     SetPriorityClass, SetProcessInformation, ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS,
@@ -35,10 +35,24 @@ use ::windows::Win32::UI::WindowsAndMessaging::{
 #[link(name = "ntdll")]
 extern "system" {
     fn NtSetSystemInformation(class: i32, info: *const c_void, len: u32) -> i32;
+    fn NtQuerySystemInformation(class: i32, info: *mut c_void, len: u32, ret_len: *mut u32) -> i32;
 }
 
 const SYSTEM_MEMORY_LIST_INFORMATION: i32 = 80;
 const MEMORY_PURGE_STANDBY_LIST: i32 = 4;
+
+#[repr(C)]
+#[derive(Default)]
+struct SystemMemoryListInformation {
+    zero_page_count: usize,
+    free_page_count: usize,
+    modified_page_count: usize,
+    modified_no_write_page_count: usize,
+    bad_page_count: usize,
+    page_count_by_priority: [usize; 8],
+    repurposed_pages_by_priority: [usize; 8],
+    modified_page_count_page_file: usize,
+}
 
 pub struct WinPlatform;
 
@@ -318,10 +332,38 @@ impl Platform for WinPlatform {
         Ok(())
     }
 
-    fn free_memory_mb(&self) -> PResult<u64> {
+    fn memory_info(&self) -> PResult<MemoryInfo> {
         let mut m = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
         unsafe { GlobalMemoryStatusEx(&mut m) }.map_err(|e| e.message().to_string())?;
-        Ok(m.ullAvailPhys / (1024 * 1024))
+        let total_mb = m.ullTotalPhys / (1024 * 1024);
+        let avail_mb = m.ullAvailPhys / (1024 * 1024);
+
+        let mut si = SYSTEM_INFO::default();
+        unsafe { GetSystemInfo(&mut si) };
+        let page_size = if si.dwPageSize > 0 { si.dwPageSize as u64 } else { 4096 };
+
+        let _ = enable_privilege(SE_PROF_SINGLE_PROCESS_NAME);
+        let mut list = SystemMemoryListInformation::default();
+        let mut ret_len = 0u32;
+        let status = unsafe {
+            NtQuerySystemInformation(
+                SYSTEM_MEMORY_LIST_INFORMATION,
+                &mut list as *mut _ as *mut c_void,
+                std::mem::size_of::<SystemMemoryListInformation>() as u32,
+                &mut ret_len,
+            )
+        };
+        let (free_mb, standby_mb) = if status >= 0 {
+            let free_pages = (list.zero_page_count as u64).saturating_add(list.free_page_count as u64);
+            let standby_pages = list.page_count_by_priority.iter().map(|&p| p as u64).sum::<u64>();
+            (
+                Some(free_pages.saturating_mul(page_size) / (1024 * 1024)),
+                Some(standby_pages.saturating_mul(page_size) / (1024 * 1024)),
+            )
+        } else {
+            (None, None)
+        };
+        Ok(MemoryInfo { total_mb, avail_mb, free_mb, standby_mb })
     }
 
     fn purge_standby_list(&self) -> PResult<()> {

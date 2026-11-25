@@ -91,6 +91,17 @@ pub fn cpu_target(sets: &[CpuSet], prefer: CpuPrefer) -> Option<Vec<u32>> {
     (ids.len() >= 4 && ids.len() < sets.len()).then_some(ids)
 }
 
+/// System memory snapshot in MB.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MemoryInfo {
+    pub total_mb: u64,
+    pub avail_mb: u64,
+    /// Truly free + zeroed pages (excludes standby cache). `None` if unavailable.
+    pub free_mb: Option<u64>,
+    /// Standby list size across all priorities. `None` if unavailable.
+    pub standby_mb: Option<u64>,
+}
+
 /// RGBA icon, square.
 #[derive(Debug, Clone)]
 pub struct Icon {
@@ -124,7 +135,7 @@ pub trait Platform: Send + Sync {
     fn set_power_throttling(&self, pid: u32, throttle: Option<bool>) -> PResult<()>;
     /// Must be called from the thread that owns the session (Windows ties this to a thread).
     fn set_keep_awake(&self, on: bool) -> PResult<()>;
-    fn free_memory_mb(&self) -> PResult<u64>;
+    fn memory_info(&self) -> PResult<MemoryInfo>;
     fn purge_standby_list(&self) -> PResult<()>;
 
     fn foreground(&self) -> Option<Foreground>;

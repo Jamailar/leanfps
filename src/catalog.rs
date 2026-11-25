@@ -165,7 +165,11 @@ pub enum Action {
     /// Lower the priority of known background apps while the game runs.
     BackgroundPriority { class: Priority, processes: Vec<String> },
     /// Purge the standby memory list when free memory drops below a threshold.
-    StandbyPurge { below_free_mb: u64 },
+    StandbyPurge {
+        below_free_mb: u64,
+        #[serde(default)]
+        min_standby_mb: u64,
+    },
     /// Windows power mode overlay ("Best performance") while the game runs.
     PowerOverlay { overlay: String },
     /// Per-game graphics preference (2 = high performance GPU). Kept after the game exits,

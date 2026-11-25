@@ -17,7 +17,9 @@ pub struct MockState {
     pub procs: Vec<(ProcInfo, Priority)>,
     pub throttling: HashMap<u32, Option<bool>>,
     pub keep_awake: bool,
+    pub total_mb: u64,
     pub free_mb: u64,
+    pub standby_mb: Option<u64>,
     pub purges: u32,
     pub foreground: Option<Foreground>,
     pub machine: Machine,
@@ -39,7 +41,9 @@ impl MockPlatform {
             schemes: vec![BALANCED.into(), HIGH_PERF.into()],
             active: BALANCED.into(),
             mouse: [6, 10, 1],
+            total_mb: 16384,
             free_mb: 8000,
+            standby_mb: Some(1024),
             overlay: "00000000-0000-0000-0000-000000000000".into(),
             machine: Machine { laptop: false, os_build: 22631, cpu: "Mock CPU".into(), ..Default::default() },
             ..Default::default()
@@ -163,8 +167,13 @@ impl Platform for MockPlatform {
         self.with(|s| s.keep_awake = on);
         Ok(())
     }
-    fn free_memory_mb(&self) -> PResult<u64> {
-        Ok(self.with(|s| s.free_mb))
+    fn memory_info(&self) -> PResult<MemoryInfo> {
+        Ok(self.with(|s| MemoryInfo {
+            total_mb: s.total_mb,
+            avail_mb: s.free_mb.saturating_add(s.standby_mb.unwrap_or(0)),
+            free_mb: Some(s.free_mb),
+            standby_mb: s.standby_mb,
+        }))
     }
     fn purge_standby_list(&self) -> PResult<()> {
         self.with(|s| s.purges += 1);
