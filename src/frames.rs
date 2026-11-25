@@ -17,12 +17,13 @@ const BINS: usize = 2500;
 pub struct FrameStats {
     pub frames: u64,
     pub total_ms: f64,
+    pub stutters: u64,
     hist: Vec<u32>,
 }
 
 impl Default for FrameStats {
     fn default() -> Self {
-        FrameStats { frames: 0, total_ms: 0.0, hist: vec![0; BINS] }
+        FrameStats { frames: 0, total_ms: 0.0, stutters: 0, hist: vec![0; BINS] }
     }
 }
 
@@ -31,10 +32,23 @@ impl FrameStats {
         if !(frame_ms > 0.0) {
             return;
         }
+        let hitch = frame_ms >= 50.0
+            || (self.frames >= 60 && frame_ms >= (self.total_ms / self.frames as f64 * 2.5).max(33.3));
+        if hitch {
+            self.stutters += 1;
+        }
         self.frames += 1;
         self.total_ms += frame_ms;
         let i = ((frame_ms / BIN_MS) as usize).min(BINS - 1);
         self.hist[i] += 1;
+    }
+
+    pub fn stutters_per_min(&self) -> f64 {
+        if self.total_ms <= 0.0 {
+            0.0
+        } else {
+            self.stutters as f64 * 60_000.0 / self.total_ms
+        }
     }
 
     pub fn avg_fps(&self) -> f64 {
@@ -77,6 +91,8 @@ pub struct Record {
     pub avg_fps: f64,
     pub low1_fps: f64,
     pub low01_fps: f64,
+    #[serde(default)]
+    pub stutters: u64,
     /// Session optimizations that were active.
     pub optimizations: usize,
 }
@@ -92,7 +108,16 @@ impl Record {
             avg_fps: s.avg_fps(),
             low1_fps: s.low_fps(1.0),
             low01_fps: s.low_fps(0.1),
+            stutters: s.stutters,
             optimizations,
+        }
+    }
+
+    pub fn stutters_per_min(&self) -> f64 {
+        if self.minutes <= 0.0 {
+            0.0
+        } else {
+            self.stutters as f64 / self.minutes
         }
     }
 }
@@ -436,5 +461,23 @@ mod tests {
         let (avg, _, n) = usual(&[a.clone(), short], "cs2.exe").unwrap();
         assert_eq!((avg.round(), n), (100.0, 1));
         assert!(usual(&[a], "other.exe").is_none());
+    }
+
+    #[test]
+    fn stutter_detection_and_legacy_record_compat() {
+        let mut s = FrameStats::default();
+        for _ in 0..100 {
+            s.add(1000.0 / 144.0);
+        }
+        assert_eq!(s.stutters, 0);
+        s.add(55.0);
+        s.add(40.0);
+        assert_eq!(s.stutters, 2);
+        assert!(s.stutters_per_min() > 0.0);
+
+        let legacy = r#"{"exe":"gta5.exe","name":"GTA V","started":1,"minutes":10.0,"frames":60000,"avg_fps":100.0,"low1_fps":70.0,"low01_fps":50.0,"optimizations":4}"#;
+        let rec: Record = serde_json::from_str(legacy).unwrap();
+        assert_eq!(rec.stutters, 0);
+        assert_eq!(rec.stutters_per_min(), 0.0);
     }
 }

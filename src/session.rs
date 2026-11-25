@@ -22,8 +22,15 @@ pub struct Applied {
     pub title: String,
     pub genre_specific: bool,
     pub result: Result<(), String>,
+    /// True when blocked by kernel anti-cheat (e.g. BattlEye), shown calmly rather than as an error.
+    pub protected: bool,
     /// Extra context, e.g. "applies from the next launch".
     pub note: Option<String>,
+}
+
+fn is_access_denied(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("access is denied") || lower.contains("denied") || lower.contains("(5)") || lower.contains("0x80070005")
 }
 
 pub struct Session {
@@ -66,6 +73,7 @@ impl Session {
                 continue;
             }
             let mut result = Ok(());
+            let mut protected = false;
             let mut note = None;
             let exe = s.game.exe_path.clone();
             let ctx = GameCtx { pid, exe_path: &exe };
@@ -122,13 +130,19 @@ impl Session {
                             }
                         }
                     }
+                    Err(e) if matches!(a, Action::GamePowerThrottlingOff | Action::GameCpuSets { .. }) && is_access_denied(&e) => {
+                        protected = true;
+                        note = Some("Protected by anti-cheat: left to Windows".to_string());
+                        result = Err(e);
+                        break;
+                    }
                     Err(e) => {
                         result = Err(e);
                         break;
                     }
                 }
             }
-            s.applied.push(Applied { tweak: t.id.clone(), title: t.title.clone(), genre_specific: t.is_genre_specific(), result, note });
+            s.applied.push(Applied { tweak: t.id.clone(), title: t.title.clone(), genre_specific: t.is_genre_specific(), result, protected, note });
         }
         s
     }
@@ -396,5 +410,19 @@ mod tests {
         assert!(recover(&pf, &store).is_empty());
         assert_eq!(pf.power_overlay().unwrap(), "00000000-0000-0000-0000-000000000000");
         assert!(!store.path("session.json").exists());
+    }
+
+    #[test]
+    fn anticheat_access_denied_marks_protected_and_keeps_honest_result() {
+        let (pf, cat, cfg, store) = setup();
+        pf.with(|st| {
+            st.fail.push("set_power_throttling:2=cannot change power throttling: Access is denied. (5)".into());
+        });
+        let s = Session::start(&pf, &cat, &cfg, &store, &mut PerGame::load(&store), game(Some(Genre::OpenWorld)), 2);
+        let throttle = s.applied.iter().find(|a| a.tweak == "game_throttling_off").unwrap();
+        assert!(throttle.result.is_err());
+        assert!(throttle.protected);
+        assert_eq!(throttle.note.as_deref(), Some("Protected by anti-cheat: left to Windows"));
+        s.end(&pf, &store);
     }
 }

@@ -76,11 +76,17 @@ impl MockPlatform {
     }
 
     fn check(&self, op: &str) -> PResult<()> {
-        if self.state.lock().unwrap().fail.iter().any(|f| f == op) {
-            Err(format!("mock failure: {op}"))
-        } else {
-            Ok(())
+        let fail = self.state.lock().unwrap().fail.clone();
+        let prefix = format!("{op}=");
+        for f in fail {
+            if f == op {
+                return Err(format!("mock failure: {op}"));
+            }
+            if let Some(msg) = f.strip_prefix(&prefix) {
+                return Err(msg.to_string());
+            }
         }
+        Ok(())
     }
 }
 
@@ -164,6 +170,7 @@ impl Platform for MockPlatform {
         })
     }
     fn set_power_throttling(&self, pid: u32, throttle: Option<bool>) -> PResult<()> {
+        self.check(&format!("set_power_throttling:{pid}"))?;
         self.with(|s| s.throttling.insert(pid, throttle));
         Ok(())
     }
