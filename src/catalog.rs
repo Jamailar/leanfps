@@ -165,7 +165,11 @@ pub enum Action {
     /// Lower the priority of known background apps while the game runs.
     BackgroundPriority { class: Priority, processes: Vec<String> },
     /// Purge the standby memory list when free memory drops below a threshold.
-    StandbyPurge { below_free_mb: u64 },
+    StandbyPurge {
+        below_free_mb: u64,
+        #[serde(default)]
+        min_standby_mb: u64,
+    },
     /// Windows power mode overlay ("Best performance") while the game runs.
     PowerOverlay { overlay: String },
     /// Per-game graphics preference (2 = high performance GPU). Kept after the game exits,
@@ -314,7 +318,7 @@ impl Catalog {
                     return Err(format!("tweak {}: action {a:?} needs session scope", t.id));
                 }
                 if let Action::BackgroundPriority { processes, .. } = a {
-                    if let Some(p) = processes.iter().find(|p| PROTECTED_PROCESSES.contains(&p.to_ascii_lowercase().as_str())) {
+                    if let Some(p) = processes.iter().find(|p| PROTECTED_PROCESSES.contains(&crate::platform::file_name_lower(p).as_str())) {
                         return Err(format!("tweak {}: {p} is a Windows process and must never be slowed down", t.id));
                     }
                 }

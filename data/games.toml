@@ -435,14 +435,56 @@ steam = 1593500
 [[game]]
 name = "Grand Theft Auto V"
 genre = "open_world"
-exe = ["GTA5.exe", "GTA5_Enhanced.exe"]
+engine = "rage"
+exe = ["GTA5.exe"]
 steam = 271590
+tips = [
+  "Cap FPS around 120 in your driver or RTSS to prevent RAGE engine physics and audio stutter.",
+  "Lower Population Density and Extended Distance Scaling first if driving through downtown stutters.",
+]
+
+[[game]]
+name = "Grand Theft Auto V Enhanced"
+genre = "open_world"
+engine = "rage"
+exe = ["GTA5_Enhanced.exe", "GTA5_Enhanced_BE.exe"]
+steam = 3240220
+tips = [
+  "Turn on Hardware-accelerated GPU scheduling (HAGS) in LeanFPS if you use DLSS or FSR Frame Generation.",
+  "Cap FPS around 120 for steady RAGE frame pacing, and leave VRAM headroom if Ray Tracing is enabled.",
+]
+
+[[game]]
+name = "FiveM"
+genre = "open_world"
+engine = "rage"
+exe = ["FiveM_*_GTAProcess.exe", "FiveM_GTAProcess.exe"]
+tips = [
+  "Modded servers stream heavy custom assets: keep Standby memory purge on and close browser tabs.",
+  "On Ryzen X3D CPUs, keeping the game on the V-Cache die helps crowded city frame times.",
+]
 
 [[game]]
 name = "Red Dead Redemption 2"
 genre = "open_world"
+engine = "rage"
 exe = ["RDR2.exe"]
 steam = 1174180
+tips = [
+  "Compare Vulkan and DirectX 12 with LeanFPS's 1% low readout: Vulkan often paces frames steadier.",
+  "Play 10 minutes after a driver update so shader compilation finishes before judging frame times.",
+]
+
+[[game]]
+name = "Grand Theft Auto IV"
+genre = "open_world"
+engine = "rage"
+exe = ["GTAIV.exe"]
+
+[[game]]
+name = "Grand Theft Auto: The Trilogy - The Definitive Edition"
+genre = "open_world"
+exe = ["LibertyCity.exe", "ViceCity.exe", "SanAndreas.exe"]
 
 [[game]]
 name = "Cyberpunk 2077"

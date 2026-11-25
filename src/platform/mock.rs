@@ -15,9 +15,12 @@ pub struct MockState {
     pub power: HashMap<(String, String, String), (u32, u32)>,
     pub mouse: [i32; 3],
     pub procs: Vec<(ProcInfo, Priority)>,
+    pub proc_paths: HashMap<u32, String>,
     pub throttling: HashMap<u32, Option<bool>>,
     pub keep_awake: bool,
+    pub total_mb: u64,
     pub free_mb: u64,
+    pub standby_mb: Option<u64>,
     pub purges: u32,
     pub foreground: Option<Foreground>,
     pub machine: Machine,
@@ -25,6 +28,7 @@ pub struct MockState {
     pub overlay: String,
     pub cpu_sets: Vec<CpuSet>,
     pub proc_cpu_sets: HashMap<u32, Vec<u32>>,
+    pub hardware: Option<HardwareInfo>,
     /// Operations that should fail, e.g. "set_priority:42".
     pub fail: Vec<String>,
 }
@@ -39,7 +43,9 @@ impl MockPlatform {
             schemes: vec![BALANCED.into(), HIGH_PERF.into()],
             active: BALANCED.into(),
             mouse: [6, 10, 1],
+            total_mb: 16384,
             free_mb: 8000,
+            standby_mb: Some(1024),
             overlay: "00000000-0000-0000-0000-000000000000".into(),
             machine: Machine { laptop: false, os_build: 22631, cpu: "Mock CPU".into(), ..Default::default() },
             ..Default::default()
@@ -71,11 +77,17 @@ impl MockPlatform {
     }
 
     fn check(&self, op: &str) -> PResult<()> {
-        if self.state.lock().unwrap().fail.iter().any(|f| f == op) {
-            Err(format!("mock failure: {op}"))
-        } else {
-            Ok(())
+        let fail = self.state.lock().unwrap().fail.clone();
+        let prefix = format!("{op}=");
+        for f in fail {
+            if f == op {
+                return Err(format!("mock failure: {op}"));
+            }
+            if let Some(msg) = f.strip_prefix(&prefix) {
+                return Err(msg.to_string());
+            }
         }
+        Ok(())
     }
 }
 
@@ -139,6 +151,9 @@ impl Platform for MockPlatform {
     fn processes(&self) -> PResult<Vec<ProcInfo>> {
         Ok(self.with(|s| s.procs.iter().map(|p| p.0.clone()).collect()))
     }
+    fn process_path(&self, pid: u32) -> Option<String> {
+        self.with(|s| s.proc_paths.get(&pid).cloned())
+    }
     fn is_alive(&self, pid: u32) -> bool {
         self.with(|s| s.procs.iter().any(|p| p.0.pid == pid))
     }
@@ -156,6 +171,7 @@ impl Platform for MockPlatform {
         })
     }
     fn set_power_throttling(&self, pid: u32, throttle: Option<bool>) -> PResult<()> {
+        self.check(&format!("set_power_throttling:{pid}"))?;
         self.with(|s| s.throttling.insert(pid, throttle));
         Ok(())
     }
@@ -163,8 +179,13 @@ impl Platform for MockPlatform {
         self.with(|s| s.keep_awake = on);
         Ok(())
     }
-    fn free_memory_mb(&self) -> PResult<u64> {
-        Ok(self.with(|s| s.free_mb))
+    fn memory_info(&self) -> PResult<MemoryInfo> {
+        Ok(self.with(|s| MemoryInfo {
+            total_mb: s.total_mb,
+            avail_mb: s.free_mb.saturating_add(s.standby_mb.unwrap_or(0)),
+            free_mb: Some(s.free_mb),
+            standby_mb: s.standby_mb,
+        }))
     }
     fn purge_standby_list(&self) -> PResult<()> {
         self.with(|s| s.purges += 1);
@@ -192,6 +213,17 @@ impl Platform for MockPlatform {
             split_cache: s.machine.split_cache || cpu_target(&s.cpu_sets, CpuPrefer::LargestCache).is_some(),
             hybrid: s.machine.hybrid || cpu_target(&s.cpu_sets, CpuPrefer::PerformanceCores).is_some(),
             ..s.machine.clone()
+        })
+    }
+    fn hardware_info(&self) -> HardwareInfo {
+        self.with(|s| {
+            s.hardware.clone().unwrap_or_else(|| HardwareInfo {
+                gpu_name: "Mock RTX 4070".into(),
+                gpu_vram_mb: 12288,
+                total_ram_mb: s.total_mb,
+                system_drive_ssd: Some(true),
+                memory_integrity_on: Some(true),
+            })
         })
     }
     fn cpu_sets(&self) -> Vec<CpuSet> {

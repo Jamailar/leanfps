@@ -1,6 +1,6 @@
 # LeanFPS
 
-**[Website](https://leanfps.com/) · [Download](https://leanfps.com/download/) · [Pro](https://leanfps.com/pro/) · [Compare 8 game optimizers](https://leanfps.com/game-optimizer-comparison/) · [Radiant Optimizer alternatives](https://leanfps.com/radiant-optimizer-alternative/)**
+**[Website](https://leanfps.com/) · [Download](https://leanfps.com/download/) · [Pro](https://leanfps.com/pro/) · [GTA 6 & open-world guide](https://leanfps.com/gta-6/) · [Compare 8 game optimizers](https://leanfps.com/game-optimizer-comparison/) · [Radiant Optimizer alternatives](https://leanfps.com/radiant-optimizer-alternative/)**
 
 **Free, open source and tiny.** LeanFPS is a game performance optimizer for Windows 10/11
 written in Rust, the free and lightweight alternative to Radiant Optimizer, Hone, Razer
@@ -94,12 +94,18 @@ Sources:
   Windows 11 optimizations for windowed games, plus advanced opt-ins (HAGS, MPO). The real previous value is saved before every change and
   restored on undo, one tweak at a time or all at once.
 - **While gaming** (session): when a game is in the foreground LeanFPS raises its priority,
-  opts it out of power throttling, keeps the PC awake and lowers background apps. On Ryzen
+  opts it out of power throttling, keeps the PC awake and lowers background apps (including
+  Rockstar Games Launcher and `SocialClubHelper.exe`, matched safely by path). On Ryzen
   X3D CPUs with two dies the game runs on the V-Cache die (Windows CPU sets). Everything
   is undone when the game exits, and after a crash on the next start.
-- **[Game profiles](https://leanfps.com/games/)**: the game is identified (built-in database, Steam and Epic libraries,
+- **[Game profiles](https://leanfps.com/games/)**: the game is identified (built-in database with
+  FiveM wildcards, Steam/Epic/GOG/Battle.net/Ubisoft/Rockstar libraries,
   or fullscreen fallback), its icon is shown, and genre-specific tweaks run (e.g. mouse
-  acceleration off for shooters, standby-memory purge for open-world games).
+  acceleration off for shooters, true standby-memory purge for open-world games like GTA V
+  Enhanced, FiveM, and Red Dead Redemption 2).
+- **[Open-world & GTA 6 readiness](https://leanfps.com/gta-6/)**: read-only local check for GPU
+  VRAM (DXGI), RAM headroom, SSD/NVMe seek penalty, HAGS for frame generation, and Windows
+  gaming basics—without fake FPS guesses or turning off security features.
 - Never: Defender, HVCI/VBS, firewall, Windows Update, CPU mitigations, game injection or
   overlays.
 
@@ -202,8 +208,9 @@ fullscreen fallback instead.
 
 ## Status
 
-Done: engine, catalog, detection, sessions, window,
-selftest, CI, Pro license key activation. Next: frametime measurement (ETW), code signing.
+Done: engine, catalog, detection (Steam/Epic/GOG/Battle.net/Ubisoft/Rockstar + FiveM),
+sessions, ETW frametime + 0.1% low + stutter tracking, open-world/GTA 6 readiness check,
+window, selftest, CI, Pro license key activation. Next: code signing.
 
 ## Pro license
 

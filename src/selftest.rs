@@ -170,7 +170,7 @@ pub fn run() -> i32 {
             out!(log, "FAIL icon extraction: {:?}", other.map(|i| i.rgba.len()));
         }
     }
-    out!(log, "free memory: {:?} MB", pf.free_memory_mb());
+    out!(log, "memory: {:?} MB", pf.memory_info());
 
     out!(log, "\n== frame counter (300 presents from a Direct3D 11 WARP window)");
     #[cfg(windows)]

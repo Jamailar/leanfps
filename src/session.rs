@@ -9,7 +9,7 @@ use crate::engine::{apply_action_recorded, revert_prior, undo_failed, Entry, Gam
 use crate::pergame::PerGame;
 use crate::catalog::Priority;
 use crate::games::GameInfo;
-use crate::platform::Platform;
+use crate::platform::{MemoryInfo, Platform};
 use crate::store::Store;
 use std::time::{Duration, Instant};
 
@@ -22,8 +22,15 @@ pub struct Applied {
     pub title: String,
     pub genre_specific: bool,
     pub result: Result<(), String>,
+    /// True when blocked by kernel anti-cheat (e.g. BattlEye), shown calmly rather than as an error.
+    pub protected: bool,
     /// Extra context, e.g. "applies from the next launch".
     pub note: Option<String>,
+}
+
+fn is_access_denied(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("access is denied") || lower.contains("denied") || lower.contains("(5)") || lower.contains("0x80070005")
 }
 
 pub struct Session {
@@ -33,8 +40,17 @@ pub struct Session {
     pub applied: Vec<Applied>,
     priors: Vec<Entry>,
     purge_below_mb: Option<u64>,
+    purge_min_standby_mb: u64,
     last_purge: Option<Instant>,
     pub purges: u32,
+}
+
+pub fn should_purge_standby(mem: MemoryInfo, below_free_mb: u64, min_standby_mb: u64) -> bool {
+    if let (Some(free), Some(standby)) = (mem.free_mb, mem.standby_mb) {
+        free < below_free_mb && standby >= min_standby_mb
+    } else {
+        mem.avail_mb < below_free_mb
+    }
 }
 
 impl Session {
@@ -47,6 +63,7 @@ impl Session {
             // Leftovers a previous recover could not restore: keep them so they are retried.
             priors: store.load(SESSION_FILE).unwrap_or_default(),
             purge_below_mb: None,
+            purge_min_standby_mb: 1024,
             last_purge: None,
             purges: 0,
         };
@@ -56,12 +73,14 @@ impl Session {
                 continue;
             }
             let mut result = Ok(());
+            let mut protected = false;
             let mut note = None;
             let exe = s.game.exe_path.clone();
             let ctx = GameCtx { pid, exe_path: &exe };
             for a in &t.actions {
-                if let Action::StandbyPurge { below_free_mb } = a {
+                if let Action::StandbyPurge { below_free_mb, min_standby_mb } = a {
                     s.purge_below_mb = Some(*below_free_mb);
+                    s.purge_min_standby_mb = if *min_standby_mb == 0 { 1024 } else { *min_standby_mb };
                 }
                 if a.is_sticky() {
                     if per_game.has(&t.id, &exe) {
@@ -111,13 +130,19 @@ impl Session {
                             }
                         }
                     }
+                    Err(e) if matches!(a, Action::GamePowerThrottlingOff | Action::GameCpuSets { .. }) && is_access_denied(&e) => {
+                        protected = true;
+                        note = Some("Protected by anti-cheat: left to Windows".to_string());
+                        result = Err(e);
+                        break;
+                    }
                     Err(e) => {
                         result = Err(e);
                         break;
                     }
                 }
             }
-            s.applied.push(Applied { tweak: t.id.clone(), title: t.title.clone(), genre_specific: t.is_genre_specific(), result, note });
+            s.applied.push(Applied { tweak: t.id.clone(), title: t.title.clone(), genre_specific: t.is_genre_specific(), result, protected, note });
         }
         s
     }
@@ -128,7 +153,7 @@ impl Session {
         if self.last_purge.is_some_and(|t| t.elapsed() < PURGE_COOLDOWN) {
             return;
         }
-        if pf.free_memory_mb().is_ok_and(|free| free < limit) && pf.purge_standby_list().is_ok() {
+        if pf.memory_info().is_ok_and(|mem| should_purge_standby(mem, limit, self.purge_min_standby_mb)) && pf.purge_standby_list().is_ok() {
             self.last_purge = Some(Instant::now());
             self.purges += 1;
         }
@@ -330,10 +355,30 @@ mod tests {
         let mut s = Session::start(&pf, &cat, &cfg, &store, &mut PerGame::load(&store), game(Some(Genre::OpenWorld)), 2);
         s.tick(&pf);
         assert_eq!(s.purges, 0);
-        pf.with(|st| st.free_mb = 500);
+        // Bloated standby (8 GB) with low truly free RAM (500 MB) must trigger even when avail_mb is high.
+        pf.with(|st| {
+            st.free_mb = 500;
+            st.standby_mb = Some(8000);
+        });
         s.tick(&pf);
         s.tick(&pf);
         assert_eq!(s.purges, 1, "cooldown between purges");
+        s.end(&pf, &store);
+    }
+
+    #[test]
+    fn standby_purge_skips_when_standby_is_small() {
+        let (pf, cat, cfg, store) = setup();
+        let mut s = Session::start(&pf, &cat, &cfg, &store, &mut PerGame::load(&store), game(Some(Genre::OpenWorld)), 2);
+        pf.with(|st| {
+            st.free_mb = 500;
+            st.standby_mb = Some(256);
+        });
+        s.tick(&pf);
+        assert_eq!(s.purges, 0, "do not purge when standby cache is small");
+        // Fallback when OS list query is unavailable: uses avail_mb.
+        assert!(should_purge_standby(MemoryInfo { total_mb: 16384, avail_mb: 800, free_mb: None, standby_mb: None }, 1024, 1024));
+        assert!(!should_purge_standby(MemoryInfo { total_mb: 16384, avail_mb: 8500, free_mb: None, standby_mb: None }, 1024, 1024));
         s.end(&pf, &store);
     }
 
@@ -365,5 +410,19 @@ mod tests {
         assert!(recover(&pf, &store).is_empty());
         assert_eq!(pf.power_overlay().unwrap(), "00000000-0000-0000-0000-000000000000");
         assert!(!store.path("session.json").exists());
+    }
+
+    #[test]
+    fn anticheat_access_denied_marks_protected_and_keeps_honest_result() {
+        let (pf, cat, cfg, store) = setup();
+        pf.with(|st| {
+            st.fail.push("set_power_throttling:2=cannot change power throttling: Access is denied. (5)".into());
+        });
+        let s = Session::start(&pf, &cat, &cfg, &store, &mut PerGame::load(&store), game(Some(Genre::OpenWorld)), 2);
+        let throttle = s.applied.iter().find(|a| a.tweak == "game_throttling_off").unwrap();
+        assert!(throttle.result.is_err());
+        assert!(throttle.protected);
+        assert_eq!(throttle.note.as_deref(), Some("Protected by anti-cheat: left to Windows"));
+        s.end(&pf, &store);
     }
 }

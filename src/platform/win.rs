@@ -19,7 +19,7 @@ use ::windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
     HKEY_LOCAL_MACHINE, KEY_READ, KEY_SET_VALUE, REG_DWORD, REG_OPTION_NON_VOLATILE, REG_SZ, REG_VALUE_TYPE,
 };
-use ::windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+use ::windows::Win32::System::SystemInformation::{GetSystemInfo, GlobalMemoryStatusEx, MEMORYSTATUSEX, SYSTEM_INFO};
 use ::windows::Win32::System::Threading::{
     GetCurrentProcess, GetExitCodeProcess, GetPriorityClass, OpenProcess, OpenProcessToken, ProcessPowerThrottling, QueryFullProcessImageNameW,
     SetPriorityClass, SetProcessInformation, ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS,
@@ -35,10 +35,24 @@ use ::windows::Win32::UI::WindowsAndMessaging::{
 #[link(name = "ntdll")]
 extern "system" {
     fn NtSetSystemInformation(class: i32, info: *const c_void, len: u32) -> i32;
+    fn NtQuerySystemInformation(class: i32, info: *mut c_void, len: u32, ret_len: *mut u32) -> i32;
 }
 
 const SYSTEM_MEMORY_LIST_INFORMATION: i32 = 80;
 const MEMORY_PURGE_STANDBY_LIST: i32 = 4;
+
+#[repr(C)]
+#[derive(Default)]
+struct SystemMemoryListInformation {
+    zero_page_count: usize,
+    free_page_count: usize,
+    modified_page_count: usize,
+    modified_no_write_page_count: usize,
+    bad_page_count: usize,
+    page_count_by_priority: [usize; 8],
+    repurposed_pages_by_priority: [usize; 8],
+    modified_page_count_page_file: usize,
+}
 
 pub struct WinPlatform;
 
@@ -267,6 +281,10 @@ impl Platform for WinPlatform {
         Ok(out)
     }
 
+    fn process_path(&self, pid: u32) -> Option<String> {
+        exe_path_of(pid)
+    }
+
     fn is_alive(&self, pid: u32) -> bool {
         let Ok(h) = open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION) else { return false };
         let mut code = 0u32;
@@ -318,10 +336,38 @@ impl Platform for WinPlatform {
         Ok(())
     }
 
-    fn free_memory_mb(&self) -> PResult<u64> {
+    fn memory_info(&self) -> PResult<MemoryInfo> {
         let mut m = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
         unsafe { GlobalMemoryStatusEx(&mut m) }.map_err(|e| e.message().to_string())?;
-        Ok(m.ullAvailPhys / (1024 * 1024))
+        let total_mb = m.ullTotalPhys / (1024 * 1024);
+        let avail_mb = m.ullAvailPhys / (1024 * 1024);
+
+        let mut si = SYSTEM_INFO::default();
+        unsafe { GetSystemInfo(&mut si) };
+        let page_size = if si.dwPageSize > 0 { si.dwPageSize as u64 } else { 4096 };
+
+        let _ = enable_privilege(SE_PROF_SINGLE_PROCESS_NAME);
+        let mut list = SystemMemoryListInformation::default();
+        let mut ret_len = 0u32;
+        let status = unsafe {
+            NtQuerySystemInformation(
+                SYSTEM_MEMORY_LIST_INFORMATION,
+                &mut list as *mut _ as *mut c_void,
+                std::mem::size_of::<SystemMemoryListInformation>() as u32,
+                &mut ret_len,
+            )
+        };
+        let (free_mb, standby_mb) = if status >= 0 {
+            let free_pages = (list.zero_page_count as u64).saturating_add(list.free_page_count as u64);
+            let standby_pages = list.page_count_by_priority.iter().map(|&p| p as u64).sum::<u64>();
+            (
+                Some(free_pages.saturating_mul(page_size) / (1024 * 1024)),
+                Some(standby_pages.saturating_mul(page_size) / (1024 * 1024)),
+            )
+        } else {
+            (None, None)
+        };
+        Ok(MemoryInfo { total_mb, avail_mb, free_mb, standby_mb })
     }
 
     fn purge_standby_list(&self) -> PResult<()> {
@@ -419,6 +465,20 @@ impl Platform for WinPlatform {
         Machine { laptop, os_build, cpu, split_cache, hybrid }
     }
 
+    fn hardware_info(&self) -> HardwareInfo {
+        let (gpu_name, gpu_vram_mb) = primary_gpu_info();
+        let total_ram_mb = self.memory_info().map(|m| m.total_mb).unwrap_or(0);
+        let system_drive_ssd = query_system_drive_ssd();
+        let memory_integrity_on = match self.reg_get(
+            "HKLM\\SYSTEM\\CurrentControlSet\\Control\\DeviceGuard\\Scenarios\\HypervisorEnforcedCodeIntegrity",
+            "Enabled",
+        ) {
+            Ok(Some(RegData::Dword(v))) => Some(v == 1),
+            _ => None,
+        };
+        HardwareInfo { gpu_name, gpu_vram_mb, total_ram_mb, system_drive_ssd, memory_integrity_on }
+    }
+
     fn cpu_sets(&self) -> Vec<CpuSet> {
         static SETS: std::sync::OnceLock<Vec<CpuSet>> = std::sync::OnceLock::new();
         SETS.get_or_init(read_cpu_sets).clone()
@@ -455,6 +515,105 @@ impl Platform for WinPlatform {
             let _ = DestroyIcon(hicon);
         }
         icon
+    }
+}
+
+/// Query the hardware adapter with the largest dedicated VRAM via DXGI, skipping software adapters.
+fn primary_gpu_info() -> (String, u64) {
+    use ::windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE};
+    let Ok(factory) = (unsafe { CreateDXGIFactory1::<IDXGIFactory1>() }) else {
+        return (String::new(), 0);
+    };
+    let mut best_name = String::new();
+    let mut best_vram = 0u64;
+    for i in 0..16 {
+        let Ok(adapter) = (unsafe { factory.EnumAdapters1(i) }) else { break };
+        let Ok(desc) = (unsafe { adapter.GetDesc1() }) else { continue };
+        if (desc.Flags & (DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32)) != 0 {
+            continue;
+        }
+        let vram_mb = (desc.DedicatedVideoMemory as u64) / (1024 * 1024);
+        if vram_mb > best_vram || best_name.is_empty() {
+            let len = desc.Description.iter().position(|&c| c == 0).unwrap_or(desc.Description.len());
+            best_name = String::from_utf16_lossy(&desc.Description[..len]).trim().to_string();
+            best_vram = vram_mb;
+        }
+    }
+    (best_name, best_vram)
+}
+
+/// Check whether the system drive incurs a seek penalty (HDD) or not (SSD/NVMe).
+fn query_system_drive_ssd() -> Option<bool> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateFileW(
+            name: *const u16,
+            access: u32,
+            share: u32,
+            sec: *const c_void,
+            disp: u32,
+            flags: u32,
+            template: HANDLE,
+        ) -> HANDLE;
+        fn DeviceIoControl(
+            device: HANDLE,
+            code: u32,
+            in_buf: *const c_void,
+            in_len: u32,
+            out_buf: *mut c_void,
+            out_len: u32,
+            bytes_returned: *mut u32,
+            overlapped: *mut c_void,
+        ) -> i32;
+    }
+    #[repr(C)]
+    struct StoragePropertyQuery {
+        property_id: u32,
+        query_type: u32,
+        additional_parameters: [u8; 1],
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct DeviceSeekPenaltyDescriptor {
+        version: u32,
+        size: u32,
+        incurs_seek_penalty: u8,
+    }
+    const FILE_SHARE_RW: u32 = 1 | 2;
+    const OPEN_EXISTING: u32 = 3;
+    const IOCTL_STORAGE_QUERY_PROPERTY: u32 = 0x002D_1400;
+    const STORAGE_DEVICE_SEEK_PENALTY_PROPERTY: u32 = 7;
+
+    let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
+    let path: Vec<u16> = format!("\\\\.\\{}", drive.trim_end_matches('\\')).encode_utf16().chain([0]).collect();
+    let h = unsafe { CreateFileW(path.as_ptr(), 0, FILE_SHARE_RW, std::ptr::null(), OPEN_EXISTING, 0, HANDLE::default()) };
+    if h.is_invalid() {
+        return None;
+    }
+    let h = Handle(h);
+    let query = StoragePropertyQuery {
+        property_id: STORAGE_DEVICE_SEEK_PENALTY_PROPERTY,
+        query_type: 0,
+        additional_parameters: [0],
+    };
+    let mut out = DeviceSeekPenaltyDescriptor::default();
+    let mut returned = 0u32;
+    let ok = unsafe {
+        DeviceIoControl(
+            h.0,
+            IOCTL_STORAGE_QUERY_PROPERTY,
+            &query as *const _ as *const c_void,
+            std::mem::size_of::<StoragePropertyQuery>() as u32,
+            &mut out as *mut _ as *mut c_void,
+            std::mem::size_of::<DeviceSeekPenaltyDescriptor>() as u32,
+            &mut returned,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok != 0 && returned as usize >= std::mem::size_of::<DeviceSeekPenaltyDescriptor>() {
+        Some(out.incurs_seek_penalty == 0)
+    } else {
+        None
     }
 }
 

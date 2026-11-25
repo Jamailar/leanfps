@@ -162,6 +162,7 @@ actions = [{ type = "background_priority", class = "below_normal", processes = [
   "chrome.exe", "msedge.exe", "firefox.exe", "opera.exe", "brave.exe", "vivaldi.exe",
   "OneDrive.exe", "Dropbox.exe", "GoogleDriveFS.exe",
   "EpicGamesLauncher.exe", "EADesktop.exe", "upc.exe", "GalaxyClient.exe",
+  "SocialClubHelper.exe", "RockstarLauncher.exe", "LauncherPatcher.exe", "rockstar games\\launcher.exe",
   "Spotify.exe", "ms-teams.exe",
 ] }]
 
@@ -257,10 +258,10 @@ actions = [{ type = "game_priority", class = "high" }]
 id = "standby_purge"
 title = "Free up standby memory"
 summary = "Clears cached standby memory when free RAM runs low, to avoid stutter in big worlds."
-detail = "While the game runs, if free memory drops below 1 GB, LeanFPS asks Windows to purge the standby list (at most once every 5 minutes). Cached files are reloaded from disk when needed."
+detail = "While the game runs, if truly free memory drops below 1 GB and the standby cache is at least 1 GB, LeanFPS asks Windows to purge the standby list (at most once every 5 minutes). Cached files are reloaded from disk when needed."
 scope = "session"
 risk = "low"
 pro = true
 genres = ["open_world", "sandbox", "mmo"]
 presets = ["recommended", "competitive", "laptop"]
-actions = [{ type = "standby_purge", below_free_mb = 1024 }]
+actions = [{ type = "standby_purge", below_free_mb = 1024, min_standby_mb = 1024 }]

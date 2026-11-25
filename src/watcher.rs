@@ -33,6 +33,8 @@ pub struct Fps {
     pub live: f64,
     pub avg: f64,
     pub low1: f64,
+    pub low01: f64,
+    pub stutters: u64,
     pub frames: u64,
 }
 
@@ -47,6 +49,7 @@ pub struct LastGame {
 pub struct Shared {
     pub session: Option<SessionView>,
     pub installed: Vec<Installed>,
+    pub hardware: Option<crate::platform::HardwareInfo>,
     /// A windowed 3D app that may be a game; the UI asks the user.
     pub candidate: Option<GameInfo>,
     pub last_game: Option<LastGame>,
@@ -215,11 +218,11 @@ fn start_capture(_pid: u32) -> Option<Capture> {
 #[cfg(windows)]
 fn capture_fps(c: &Capture) -> Fps {
     let st = c.stats();
-    Fps { live: c.live_fps(), avg: st.avg_fps(), low1: st.low_fps(1.0), frames: st.frames }
+    Fps { live: c.live_fps(), avg: st.avg_fps(), low1: st.low_fps(1.0), low01: st.low_fps(0.1), stutters: st.stutters, frames: st.frames }
 }
 #[cfg(not(windows))]
 fn capture_fps(_c: &Capture) -> Fps {
-    Fps { live: 241.0, avg: 236.0, low1: 168.0, frames: 4000 }
+    Fps { live: 241.0, avg: 236.0, low1: 168.0, low01: 132.0, stutters: 1, frames: 4000 }
 }
 
 impl Watcher {
@@ -256,7 +259,7 @@ impl Watcher {
     }
 }
 
-/// Installed games on this PC: Steam, Epic, GOG, Battle.net, Ubisoft.
+/// Installed games on this PC: Steam, Epic, GOG, Battle.net, Ubisoft, Rockstar.
 pub fn scan_installed() -> Vec<Installed> {
     #[cfg(windows)]
     {
@@ -272,7 +275,15 @@ pub fn scan_installed() -> Vec<Installed> {
                 _ => None,
             })
             .collect();
-        crate::games::library::scan(win::steam_root().as_deref(), win::epic_manifests().as_deref(), &uninstall, &ubisoft)
+        let mut rockstar = Vec::new();
+        for root in ["HKLM\\SOFTWARE\\WOW6432Node\\Rockstar Games", "HKLM\\SOFTWARE\\Rockstar Games"] {
+            for sub in pf.reg_subkeys(root) {
+                if let Ok(Some(crate::catalog::RegData::Sz(d))) = pf.reg_get(&format!("{root}\\{sub}"), "InstallFolder") {
+                    rockstar.push((sub, d));
+                }
+            }
+        }
+        crate::games::library::scan(win::steam_root().as_deref(), win::epic_manifests().as_deref(), &uninstall, &ubisoft, &rockstar)
     }
     #[cfg(not(windows))]
     {

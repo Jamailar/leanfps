@@ -186,11 +186,31 @@ pub fn capture_prior(pf: &dyn Platform, action: &Action, game: Option<GameCtx>) 
         Action::KeepAwake => Ok(Prior::KeepAwake),
         Action::BackgroundPriority { class, processes } => {
             let game = need_pid()?;
-            let names: Vec<String> = processes.iter().map(|p| p.to_ascii_lowercase()).collect();
+            let mut plain = Vec::new();
+            let mut qualified = Vec::new();
+            for p in processes {
+                let norm = p.replace('/', "\\").to_ascii_lowercase();
+                if let Some((dir_frag, file)) = norm.rsplit_once('\\') {
+                    if !dir_frag.is_empty() && !file.is_empty() {
+                        qualified.push((dir_frag.trim_matches('\\').to_string(), file.to_string()));
+                    }
+                } else {
+                    plain.push(norm);
+                }
+            }
             let mut items = Vec::new();
             for p in pf.processes()? {
                 let exe = file_name_lower(&p.exe_name);
-                if p.pid == game || !names.contains(&exe) || PROTECTED_PROCESSES.contains(&exe.as_str()) {
+                if p.pid == game || PROTECTED_PROCESSES.contains(&exe.as_str()) {
+                    continue;
+                }
+                let matched = plain.contains(&exe)
+                    || (qualified.iter().any(|(_, f)| f == &exe)
+                        && pf.process_path(p.pid).is_some_and(|full| {
+                            let full = full.replace('/', "\\").to_ascii_lowercase();
+                            qualified.iter().any(|(dir, f)| f == &exe && full.contains(&format!("\\{dir}\\")))
+                        }));
+                if !matched {
                     continue;
                 }
                 // Skip processes we can't read (other users, protected). Never fatal.
@@ -706,6 +726,31 @@ mod tests {
         pf.with(|s| {
             assert_eq!(s.procs[0].1, Priority::Normal);
             assert_eq!(s.procs[1].1, Priority::BelowNormal);
+        });
+    }
+
+    #[test]
+    fn path_qualified_background_priority_skips_unrelated_apps() {
+        let pf = MockPlatform::new();
+        pf.with(|s| {
+            s.procs = vec![
+                (crate::platform::ProcInfo { pid: 1, exe_name: "Launcher.exe".into() }, Priority::Normal),
+                (crate::platform::ProcInfo { pid: 2, exe_name: "Launcher.exe".into() }, Priority::Normal),
+                (crate::platform::ProcInfo { pid: 3, exe_name: "SocialClubHelper.exe".into() }, Priority::Normal),
+            ];
+            s.proc_paths.insert(1, r"C:\Program Files\Rockstar Games\Launcher\Launcher.exe".into());
+            s.proc_paths.insert(2, r"D:\Tools\OtherApp\Launcher.exe".into());
+        });
+        let a = Action::BackgroundPriority {
+            class: Priority::BelowNormal,
+            processes: vec!["SocialClubHelper.exe".into(), "rockstar games\\launcher.exe".into()],
+        };
+        let ctx = GameCtx { pid: 99, exe_path: "GTA5_Enhanced.exe" };
+        apply_action_recorded(&pf, &a, Some(ctx), &mut |_| Ok(())).unwrap();
+        pf.with(|s| {
+            assert_eq!(s.procs[0].1, Priority::BelowNormal, "Rockstar Launcher lowered");
+            assert_eq!(s.procs[1].1, Priority::Normal, "unrelated Launcher.exe left alone");
+            assert_eq!(s.procs[2].1, Priority::BelowNormal, "SocialClubHelper lowered");
         });
     }
 }

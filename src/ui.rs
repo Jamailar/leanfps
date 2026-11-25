@@ -184,6 +184,8 @@ pub struct App {
     activation: Option<Activation>,
     /// When the main switch was last flipped, for its sweep and ripple.
     power_flipped: Option<Instant>,
+    tip_index: HashMap<String, usize>,
+    readiness_open: bool,
 }
 
 /// Results of license calls, which run on a worker thread so the window never waits.
@@ -266,6 +268,8 @@ impl App {
             // Due right away, so a file that asks for a refresh gets one at start.
             license_checked: None,
             activation: None,
+            tip_index: HashMap::new(),
+            readiness_open: false,
         }
     }
 
@@ -774,6 +778,10 @@ impl App {
                     });
                     ui.add_space(2.0);
                     stats(ui, &[(format!("{:.0}", r.avg_fps), "FPS average"), (format!("{:.0}", r.low1_fps), "FPS 1% low"), (format!("{:.0}", r.minutes), "Minutes")]);
+                    if r.frames > 0 {
+                        ui.add_space(4.0);
+                        stutter_summary(ui, r.low01_fps, r.stutters, r.minutes, r.stutters_per_min() > 2.0);
+                    }
                     if let Some((avg, low, n)) = last.usual {
                         compare(ui, r.avg_fps, r.low1_fps, avg, low, n);
                     }
@@ -844,6 +852,10 @@ impl App {
             if let Some(f) = s.fps.filter(|f| f.frames > 0) {
                 ui.add_space(10.0);
                 stats(ui, &[(format!("{:.0}", f.live), "FPS now"), (format!("{:.0}", f.avg), "Average"), (format!("{:.0}", f.low1), "1% low")]);
+                ui.add_space(4.0);
+                let mins = s.started.elapsed().as_secs_f64() / 60.0;
+                let elevated = (mins >= 1.0 && f.stutters as f64 / mins > 2.0) || (mins < 1.0 && f.stutters >= 5);
+                stutter_summary(ui, f.low01, f.stutters, mins, elevated);
                 if let Some((avg, low, n)) = s.usual {
                     if f.frames > 3000 {
                         compare(ui, f.avg, f.low1, avg, low, n);
@@ -885,14 +897,27 @@ impl App {
             if s.purges > 0 {
                 ui.label(RichText::new(format!("Standby memory freed {} time{}", s.purges, if s.purges == 1 { "" } else { "s" })).small().color(p.muted));
             }
-            if let Some(tip) = s.game.genre.and_then(|g| self.db.tips(g).first()) {
+            let tips = self.db.tips_for(&s.game);
+            if !tips.is_empty() {
+                let idx = *self.tip_index.get(&s.game.exe_path).unwrap_or(&0) % tips.len();
+                let tip = &tips[idx];
                 ui.add_space(6.0);
                 egui::Frame::NONE.fill(p.well).corner_radius(10).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.horizontal_wrapped(|ui| {
+                    ui.horizontal(|ui| {
                         ui.label(overline("Tip", p.accent_text));
-                        ui.label(RichText::new(tip).small().color(p.muted));
+                        if tips.len() > 1 {
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let resp = ui
+                                    .add(egui::Label::new(RichText::new(format!("{}/{}  Next ›", idx + 1, tips.len())).small().color(p.accent_text)).sense(Sense::click()))
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                if resp.clicked() {
+                                    self.tip_index.insert(s.game.exe_path.clone(), (idx + 1) % tips.len());
+                                }
+                            });
+                        }
                     });
+                    ui.label(RichText::new(tip).small().color(p.muted));
                 });
             }
         });
@@ -1032,6 +1057,98 @@ impl App {
             ui.label(RichText::new("The preset picks these for you. Open to turn single changes on or off.").small().color(p.muted));
         }
         open
+    }
+
+    /// Read-only hardware & Windows checks for demanding open-world titles (GTA V Enhanced, FiveM, RDR2, future GTA 6 PC).
+    fn readiness_section(&mut self, ui: &mut Ui, cat: &Catalog, cfg: &Config) {
+        let (hw, installed) = {
+            let s = self.shared.lock().unwrap();
+            (s.hardware.clone(), s.installed.clone())
+        };
+        let Some(hw) = hw else { return };
+        // Ensure cached tweak states are populated without hitting the registry every paint.
+        let _ = self.state("hags_on");
+        let report = crate::readiness::evaluate_with(&hw, &installed, |id| {
+            self.states.get(id).cloned().unwrap_or(TweakState::NotApplied)
+        });
+        let p = pal(ui);
+        let open = self.readiness_open;
+        ui.add_space(10.0);
+        let resp = ui
+            .horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(Vec2::new(10.0, 14.0), Sense::hover());
+                chevron(ui.painter(), r.center(), open, p.muted);
+                ui.label(RichText::new("Open-world & GTA 6 readiness").font(FontId::new(13.0, semi())).color(p.text));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let (c, soft) = if report.ready_count == report.total_checks {
+                        (p.accent_text, p.accent_soft)
+                    } else {
+                        (p.muted, p.well)
+                    };
+                    pill(ui, &format!("{}/{} ready", report.ready_count, report.total_checks), c, soft);
+                });
+            })
+            .response
+            .interact(Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if resp.clicked() {
+            self.readiness_open = !open;
+        }
+        if !open {
+            ui.label(RichText::new("Local hardware & Windows checks for GTA V Enhanced, FiveM, and next-gen open worlds.").small().color(p.muted));
+            return;
+        }
+        ui.add_space(4.0);
+        let mut toggle_tweak: Option<Tweak> = None;
+        card(ui, |ui| {
+            ui.label(
+                RichText::new("GTA 6 PC isn't out yet — checks real hardware & Windows basics for GTA V Enhanced, FiveM, RDR2, and next-gen open worlds.")
+                    .small()
+                    .color(p.muted),
+            );
+            ui.add_space(8.0);
+            for (idx, c) in report.checks.iter().enumerate() {
+                if idx > 0 {
+                    hairline(ui);
+                    ui.add_space(6.0);
+                }
+                let dot_color = match c.status {
+                    crate::readiness::Status::Ready => p.accent,
+                    crate::readiness::Status::Info => p.muted,
+                    crate::readiness::Status::Warn => p.warn,
+                };
+                ui.horizontal(|ui| {
+                    status_dot(ui, dot_color);
+                    ui.label(RichText::new(&c.title).font(FontId::new(12.5, semi())).color(p.text));
+                    if let Some(tweak_id) = c.action_tweak {
+                        if let Some(t) = cat.get(tweak_id) {
+                            let locked = t.pro && cfg.tier() == Tier::Free;
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if locked {
+                                    tag(ui, "PRO", p.pro, p.pro_soft);
+                                } else if !cfg.paused && !cfg.wants(t) {
+                                    if ui
+                                        .add(egui::Button::new(RichText::new("Turn on").small().color(p.accent_text)).corner_radius(6))
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked()
+                                    {
+                                        toggle_tweak = Some(t.clone());
+                                    }
+                                }
+                            });
+                        }
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_space(14.0);
+                    ui.label(RichText::new(&c.detail).small().color(p.muted));
+                });
+                ui.add_space(4.0);
+            }
+        });
+        if let Some(t) = toggle_tweak {
+            self.toggle(&t, true);
+        }
     }
 
     fn group(&mut self, ui: &mut Ui, title: &str, hint: &str, tweaks: Vec<Tweak>, progress: Option<(usize, usize)>) {
@@ -1287,6 +1404,7 @@ impl eframe::App for App {
                 // With the main switch off the choices stay visible but can't be changed.
                 ui.add_enabled_ui(!cfg.paused, |ui| {
                     self.preset_row(ui);
+                    self.readiness_section(ui, &cat, &cfg);
                     if self.all_settings_toggle(ui, &cat, &cfg, progress) {
                         let by = |f: &dyn Fn(&Tweak) -> bool| cat.tweak.iter().filter(|t| f(t)).cloned().collect::<Vec<_>>();
                         self.group(ui, "System", "Changed once, kept until you undo them.", by(&|t| t.scope == Scope::Persistent), progress);
@@ -1666,14 +1784,39 @@ impl Tone {
     }
 }
 
+fn stutter_summary(ui: &mut Ui, low01: f64, stutters: u64, mins: f64, elevated: bool) {
+    let p = pal(ui);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new(format!("0.1% low {:.0} FPS", low01)).small().color(p.muted));
+        ui.label(RichText::new("·").small().color(p.faint));
+        let text = if stutters == 0 {
+            "0 stutters".to_string()
+        } else if mins >= 1.0 {
+            format!("{stutters} stutter{} ({:.1}/min)", if stutters == 1 { "" } else { "s" }, stutters as f64 / mins)
+        } else {
+            format!("{stutters} stutter{}", if stutters == 1 { "" } else { "s" })
+        };
+        ui.label(RichText::new(text).small().color(if elevated { p.warn } else { p.muted }));
+    });
+}
+
 fn applied_line(ui: &mut Ui, a: &crate::session::Applied, strong: bool) {
     let p = pal(ui);
     ui.horizontal(|ui| {
-        check_mark(ui, if a.result.is_ok() { p.accent_text } else { p.warn });
+        if a.protected {
+            status_dot(ui, p.muted);
+        } else {
+            check_mark(ui, if a.result.is_ok() { p.accent_text } else { p.warn });
+        }
         let font = if strong { FontId::new(12.0, semi()) } else { FontId::proportional(11.5) };
-        let r = ui.label(RichText::new(&a.title).font(font).color(p.text));
+        let color = if a.protected { p.muted } else { p.text };
+        let r = ui.label(RichText::new(&a.title).font(font).color(color));
         if let Err(e) = &a.result {
-            r.on_hover_text(format!("Skipped: {e}"));
+            if !a.protected {
+                r.on_hover_text(format!("Skipped: {e}"));
+            } else if let Some(n) = &a.note {
+                r.on_hover_text(n);
+            }
         } else if let Some(n) = &a.note {
             r.on_hover_text(n);
         }

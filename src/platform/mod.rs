@@ -91,6 +91,29 @@ pub fn cpu_target(sets: &[CpuSet], prefer: CpuPrefer) -> Option<Vec<u32>> {
     (ids.len() >= 4 && ids.len() < sets.len()).then_some(ids)
 }
 
+/// System memory snapshot in MB.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MemoryInfo {
+    pub total_mb: u64,
+    pub avail_mb: u64,
+    /// Truly free + zeroed pages (excludes standby cache). `None` if unavailable.
+    pub free_mb: Option<u64>,
+    /// Standby list size across all priorities. `None` if unavailable.
+    pub standby_mb: Option<u64>,
+}
+
+/// Hardware and OS security snapshot for local open-world readiness checks.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HardwareInfo {
+    pub gpu_name: String,
+    pub gpu_vram_mb: u64,
+    pub total_ram_mb: u64,
+    /// `Some(true)` = SSD/NVMe, `Some(false)` = HDD, `None` = unknown.
+    pub system_drive_ssd: Option<bool>,
+    /// Read-only status of Windows Memory Integrity (HVCI). LeanFPS never alters this.
+    pub memory_integrity_on: Option<bool>,
+}
+
 /// RGBA icon, square.
 #[derive(Debug, Clone)]
 pub struct Icon {
@@ -117,6 +140,8 @@ pub trait Platform: Send + Sync {
     fn set_mouse_params(&self, params: [i32; 3]) -> PResult<()>;
 
     fn processes(&self) -> PResult<Vec<ProcInfo>>;
+    /// Full executable path of `pid` when readable (`None` for protected/system processes).
+    fn process_path(&self, pid: u32) -> Option<String>;
     fn is_alive(&self, pid: u32) -> bool;
     fn priority(&self, pid: u32) -> PResult<Priority>;
     fn set_priority(&self, pid: u32, class: Priority) -> PResult<()>;
@@ -124,7 +149,7 @@ pub trait Platform: Send + Sync {
     fn set_power_throttling(&self, pid: u32, throttle: Option<bool>) -> PResult<()>;
     /// Must be called from the thread that owns the session (Windows ties this to a thread).
     fn set_keep_awake(&self, on: bool) -> PResult<()>;
-    fn free_memory_mb(&self) -> PResult<u64>;
+    fn memory_info(&self) -> PResult<MemoryInfo>;
     fn purge_standby_list(&self) -> PResult<()>;
 
     fn foreground(&self) -> Option<Foreground>;
@@ -143,6 +168,7 @@ pub trait Platform: Send + Sync {
     /// This process's CPU time in milliseconds and working set in MB.
     fn self_usage(&self) -> (u64, u64);
     fn machine(&self) -> Machine;
+    fn hardware_info(&self) -> HardwareInfo;
     fn exe_icon(&self, exe_path: &str, size: usize) -> Option<Icon>;
 }
 

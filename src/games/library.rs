@@ -11,6 +11,7 @@ pub enum Store {
     Gog,
     BattleNet,
     Ubisoft,
+    Rockstar,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -251,6 +252,27 @@ pub fn from_ubisoft(installs: &[String]) -> Vec<Installed> {
         .collect()
 }
 
+/// Rockstar Games Launcher installs: `(subkey_name, install_folder)` pairs from the registry.
+/// Skips launcher/Social Club components so only real games enter the library.
+pub fn from_rockstar(installs: &[(String, String)]) -> Vec<Installed> {
+    const NON_GAMES: [&str; 4] = ["launcher", "social club", "rockstar games launcher", "rockstar games social club"];
+    installs
+        .iter()
+        .filter_map(|(name, dir)| {
+            let clean_name = name.trim();
+            let clean_dir = dir.trim().trim_matches('"').replace('/', "\\");
+            let clean_dir = clean_dir.trim_end_matches('\\');
+            if clean_name.is_empty() || clean_dir.is_empty() {
+                return None;
+            }
+            if NON_GAMES.contains(&clean_name.to_ascii_lowercase().as_str()) {
+                return None;
+            }
+            Some(Installed { name: clean_name.to_string(), dir: PathBuf::from(clean_dir), store: Store::Rockstar, steam_appid: None, exe: None })
+        })
+        .collect()
+}
+
 // ------------------------------------------------------------------ folder conventions
 
 /// Install folders that only hold games: (marker, launcher). The folder right after the
@@ -314,7 +336,13 @@ pub fn owner_of<'a>(games: &'a [Installed], exe_path: &str) -> Option<&'a Instal
 }
 
 /// Scan everything we know about. Paths come from the platform layer on Windows.
-pub fn scan(steam_root: Option<&Path>, epic_manifests: Option<&Path>, uninstall: &[UninstallEntry], ubisoft: &[String]) -> Vec<Installed> {
+pub fn scan(
+    steam_root: Option<&Path>,
+    epic_manifests: Option<&Path>,
+    uninstall: &[UninstallEntry],
+    ubisoft: &[String],
+    rockstar: &[(String, String)],
+) -> Vec<Installed> {
     let mut all = Vec::new();
     if let Some(r) = steam_root {
         all.extend(steam_games(r));
@@ -324,6 +352,7 @@ pub fn scan(steam_root: Option<&Path>, epic_manifests: Option<&Path>, uninstall:
     }
     all.extend(from_uninstall(uninstall));
     all.extend(from_ubisoft(ubisoft));
+    all.extend(from_rockstar(rockstar));
     let mut seen = HashMap::new();
     all.retain(|g| seen.insert(normalize(&g.dir.to_string_lossy()), ()).is_none());
     all.sort_by_key(|g| g.name.to_lowercase());
@@ -417,7 +446,7 @@ mod tests {
         .unwrap();
         std::fs::write(epic.join("broken.item"), "").unwrap();
 
-        let games = scan(Some(&steam), Some(&epic), &[], &[]);
+        let games = scan(Some(&steam), Some(&epic), &[], &[], &[]);
         let names: Vec<_> = games.iter().map(|g| g.name.as_str()).collect();
         assert_eq!(names, vec!["Counter-Strike 2", "Fortnite"]);
         let cs = &games[0];
@@ -425,5 +454,18 @@ mod tests {
         assert_eq!(owner_of(&games, &exe).unwrap().steam_appid, Some(730));
         assert!(owner_of(&games, "C:\\Other\\cs2.exe").is_none());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rockstar_registry_installs_skip_launcher_components() {
+        let r = from_rockstar(&[
+            ("Launcher".into(), r"C:\Program Files\Rockstar Games\Launcher".into()),
+            ("Social Club".into(), r"C:\Program Files\Rockstar Games\Social Club".into()),
+            ("Grand Theft Auto V Enhanced".into(), r"D:\Games\GTAVEnhanced\".into()),
+        ]);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].name, "Grand Theft Auto V Enhanced");
+        assert_eq!(r[0].store, Store::Rockstar);
+        assert!(owner_of(&r, r"D:\Games\GTAVEnhanced\custom_build.exe").is_some());
     }
 }
