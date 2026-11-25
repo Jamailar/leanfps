@@ -15,6 +15,7 @@ pub struct MockState {
     pub power: HashMap<(String, String, String), (u32, u32)>,
     pub mouse: [i32; 3],
     pub procs: Vec<(ProcInfo, Priority)>,
+    pub proc_paths: HashMap<u32, String>,
     pub throttling: HashMap<u32, Option<bool>>,
     pub keep_awake: bool,
     pub total_mb: u64,
@@ -142,6 +143,9 @@ impl Platform for MockPlatform {
     }
     fn processes(&self) -> PResult<Vec<ProcInfo>> {
         Ok(self.with(|s| s.procs.iter().map(|p| p.0.clone()).collect()))
+    }
+    fn process_path(&self, pid: u32) -> Option<String> {
+        self.with(|s| s.proc_paths.get(&pid).cloned())
     }
     fn is_alive(&self, pid: u32) -> bool {
         self.with(|s| s.procs.iter().any(|p| p.0.pid == pid))

@@ -20,6 +20,10 @@ pub struct KnownGame {
     /// All of these must appear (case-insensitive) in the full path, for generic exes like javaw.exe.
     #[serde(default)]
     pub path_contains: Vec<String>,
+    #[serde(default)]
+    pub engine: Option<String>,
+    #[serde(default)]
+    pub tips: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -37,6 +41,37 @@ pub struct GameDb {
 
 pub const BUILTIN_GAMES: &str = include_str!("../../data/games.toml");
 
+/// Case-insensitive exe matcher supporting `*` wildcards (e.g. `FiveM_*_GTAProcess.exe`).
+pub fn exe_matches(pattern: &str, name: &str) -> bool {
+    if !pattern.contains('*') {
+        return pattern.eq_ignore_ascii_case(name);
+    }
+    let p = pattern.to_ascii_lowercase().into_bytes();
+    let s = name.to_ascii_lowercase().into_bytes();
+    let (mut pi, mut si) = (0usize, 0usize);
+    let (mut star, mut match_si) = (None, 0usize);
+    while si < s.len() {
+        if pi < p.len() && p[pi] == s[si] {
+            pi += 1;
+            si += 1;
+        } else if pi < p.len() && p[pi] == b'*' {
+            star = Some(pi);
+            match_si = si;
+            pi += 1;
+        } else if let Some(st) = star {
+            pi = st + 1;
+            match_si += 1;
+            si = match_si;
+        } else {
+            return false;
+        }
+    }
+    while pi < p.len() && p[pi] == b'*' {
+        pi += 1;
+    }
+    pi == p.len()
+}
+
 impl GameDb {
     pub fn builtin() -> GameDb {
         toml::from_str(BUILTIN_GAMES).expect("built-in game database is valid")
@@ -46,11 +81,21 @@ impl GameDb {
         self.genre.iter().find(|x| x.id == g).map(|x| x.tips.as_slice()).unwrap_or(&[])
     }
 
+    /// Game-specific tips when available, otherwise falls back to the genre's tips.
+    pub fn tips_for(&self, game: &GameInfo) -> &[String] {
+        if let Some(k) = self.by_exe(&game.exe_path).or_else(|| self.by_name(&game.name)) {
+            if !k.tips.is_empty() {
+                return &k.tips;
+            }
+        }
+        game.genre.map(|g| self.tips(g)).unwrap_or(&[])
+    }
+
     pub fn by_exe(&self, exe_path: &str) -> Option<&KnownGame> {
         let file = file_name_lower(exe_path);
         let path = exe_path.to_ascii_lowercase();
         self.game.iter().find(|g| {
-            g.exe.iter().any(|e| e.eq_ignore_ascii_case(&file))
+            g.exe.iter().any(|e| exe_matches(e, &file))
                 && g.path_contains.iter().all(|p| path.contains(&p.to_ascii_lowercase()))
         })
     }
@@ -114,7 +159,8 @@ const NOT_GAMES: &[&str] = &[
     "epicwebhelper.exe", "unrealcefsubprocess.exe", "crashreportclient.exe", "unitycrashhandler64.exe",
     "riotclientservices.exe", "riotclientux.exe", "riotclientuxrender.exe", "battle.net.exe", "agent.exe",
     "eadesktop.exe", "eabackgroundservice.exe", "upc.exe", "uplaywebcore.exe", "galaxyclient.exe",
-    "rockstarlauncher.exe", "socialclubhelper.exe", "xboxpcapp.exe", "gamingservices.exe",
+    "rockstarlauncher.exe", "socialclubhelper.exe", "playgtav.exe", "launcherpatcher.exe", "rockstarerrorhandler.exe",
+    "rockstarservice.exe", "socialclubui.exe", "beservice.exe", "beservice_x64.exe", "xboxpcapp.exe", "gamingservices.exe",
     "blender.exe", "unity.exe", "unrealeditor.exe", "photoshop.exe", "afterfx.exe", "premiere pro.exe",
     "resolve.exe", "nvidia app.exe", "nvcontainer.exe", "radeonsoftware.exe", "msiafterburner.exe",
     "hyp.exe", "wegame.exe", "ubisoftconnect.exe", "heroic.exe", "playnite.desktopapp.exe", "playnite.fullscreenapp.exe",
@@ -337,5 +383,25 @@ mod tests {
     fn emulators_are_games_without_genre() {
         let e = info(run(r"C:\Emu\Ryujinx.exe", false, 0.5, None, &[], &Prefs::default()));
         assert_eq!((e.source, e.genre), (Source::Known, None));
+    }
+
+    #[test]
+    fn rockstar_and_fivem_detection_and_tips() {
+        let p = Prefs::default();
+        let db = GameDb::builtin();
+
+        let fivem = info(run(r"C:\Users\Jam\AppData\Local\FiveM\FiveM.app\data\cache\subprocess\FiveM_b3258_GTAProcess.exe", false, 1.0, None, &[], &p));
+        assert_eq!((fivem.name.as_str(), fivem.genre, fivem.source), ("FiveM", Some(Genre::OpenWorld), Source::Known));
+        assert!(!db.tips_for(&fivem).is_empty());
+
+        let gtav_enh = info(run(r"D:\SteamLibrary\steamapps\common\Grand Theft Auto V Enhanced\GTA5_Enhanced_BE.exe", false, 1.0, None, &[], &p));
+        assert_eq!((gtav_enh.name.as_str(), gtav_enh.genre), ("Grand Theft Auto V Enhanced", Some(Genre::OpenWorld)));
+        assert!(db.tips_for(&gtav_enh).iter().any(|t| t.contains("HAGS")));
+
+        assert_eq!(SteamGenres::builtin().by_appid(3240220), Some(Genre::OpenWorld));
+
+        for helper in ["PlayGTAV.exe", "LauncherPatcher.exe", "BEService.exe"] {
+            assert_eq!(run(&format!(r"C:\Games\{helper}"), true, 1.0, Some(true), &[], &p), Verdict::NotGame, "{helper}");
+        }
     }
 }

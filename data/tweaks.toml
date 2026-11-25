@@ -162,6 +162,7 @@ actions = [{ type = "background_priority", class = "below_normal", processes = [
   "chrome.exe", "msedge.exe", "firefox.exe", "opera.exe", "brave.exe", "vivaldi.exe",
   "OneDrive.exe", "Dropbox.exe", "GoogleDriveFS.exe",
   "EpicGamesLauncher.exe", "EADesktop.exe", "upc.exe", "GalaxyClient.exe",
+  "SocialClubHelper.exe", "RockstarLauncher.exe", "LauncherPatcher.exe", "rockstar games\\launcher.exe",
   "Spotify.exe", "ms-teams.exe",
 ] }]
 

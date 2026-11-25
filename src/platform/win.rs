@@ -281,6 +281,10 @@ impl Platform for WinPlatform {
         Ok(out)
     }
 
+    fn process_path(&self, pid: u32) -> Option<String> {
+        exe_path_of(pid)
+    }
+
     fn is_alive(&self, pid: u32) -> bool {
         let Ok(h) = open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION) else { return false };
         let mut code = 0u32;

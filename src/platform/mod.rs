@@ -128,6 +128,8 @@ pub trait Platform: Send + Sync {
     fn set_mouse_params(&self, params: [i32; 3]) -> PResult<()>;
 
     fn processes(&self) -> PResult<Vec<ProcInfo>>;
+    /// Full executable path of `pid` when readable (`None` for protected/system processes).
+    fn process_path(&self, pid: u32) -> Option<String>;
     fn is_alive(&self, pid: u32) -> bool;
     fn priority(&self, pid: u32) -> PResult<Priority>;
     fn set_priority(&self, pid: u32, class: Priority) -> PResult<()>;

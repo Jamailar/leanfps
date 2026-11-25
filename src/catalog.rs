@@ -318,7 +318,7 @@ impl Catalog {
                     return Err(format!("tweak {}: action {a:?} needs session scope", t.id));
                 }
                 if let Action::BackgroundPriority { processes, .. } = a {
-                    if let Some(p) = processes.iter().find(|p| PROTECTED_PROCESSES.contains(&p.to_ascii_lowercase().as_str())) {
+                    if let Some(p) = processes.iter().find(|p| PROTECTED_PROCESSES.contains(&crate::platform::file_name_lower(p).as_str())) {
                         return Err(format!("tweak {}: {p} is a Windows process and must never be slowed down", t.id));
                     }
                 }

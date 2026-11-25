@@ -256,7 +256,7 @@ impl Watcher {
     }
 }
 
-/// Installed games on this PC: Steam, Epic, GOG, Battle.net, Ubisoft.
+/// Installed games on this PC: Steam, Epic, GOG, Battle.net, Ubisoft, Rockstar.
 pub fn scan_installed() -> Vec<Installed> {
     #[cfg(windows)]
     {
@@ -272,7 +272,15 @@ pub fn scan_installed() -> Vec<Installed> {
                 _ => None,
             })
             .collect();
-        crate::games::library::scan(win::steam_root().as_deref(), win::epic_manifests().as_deref(), &uninstall, &ubisoft)
+        let mut rockstar = Vec::new();
+        for root in ["HKLM\\SOFTWARE\\WOW6432Node\\Rockstar Games", "HKLM\\SOFTWARE\\Rockstar Games"] {
+            for sub in pf.reg_subkeys(root) {
+                if let Ok(Some(crate::catalog::RegData::Sz(d))) = pf.reg_get(&format!("{root}\\{sub}"), "InstallFolder") {
+                    rockstar.push((sub, d));
+                }
+            }
+        }
+        crate::games::library::scan(win::steam_root().as_deref(), win::epic_manifests().as_deref(), &uninstall, &ubisoft, &rockstar)
     }
     #[cfg(not(windows))]
     {
