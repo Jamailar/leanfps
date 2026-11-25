@@ -28,6 +28,7 @@ pub struct MockState {
     pub overlay: String,
     pub cpu_sets: Vec<CpuSet>,
     pub proc_cpu_sets: HashMap<u32, Vec<u32>>,
+    pub hardware: Option<HardwareInfo>,
     /// Operations that should fail, e.g. "set_priority:42".
     pub fail: Vec<String>,
 }
@@ -212,6 +213,17 @@ impl Platform for MockPlatform {
             split_cache: s.machine.split_cache || cpu_target(&s.cpu_sets, CpuPrefer::LargestCache).is_some(),
             hybrid: s.machine.hybrid || cpu_target(&s.cpu_sets, CpuPrefer::PerformanceCores).is_some(),
             ..s.machine.clone()
+        })
+    }
+    fn hardware_info(&self) -> HardwareInfo {
+        self.with(|s| {
+            s.hardware.clone().unwrap_or_else(|| HardwareInfo {
+                gpu_name: "Mock RTX 4070".into(),
+                gpu_vram_mb: 12288,
+                total_ram_mb: s.total_mb,
+                system_drive_ssd: Some(true),
+                memory_integrity_on: Some(true),
+            })
         })
     }
     fn cpu_sets(&self) -> Vec<CpuSet> {

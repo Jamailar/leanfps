@@ -49,6 +49,7 @@ pub struct LastGame {
 pub struct Shared {
     pub session: Option<SessionView>,
     pub installed: Vec<Installed>,
+    pub hardware: Option<crate::platform::HardwareInfo>,
     /// A windowed 3D app that may be a game; the UI asks the user.
     pub candidate: Option<GameInfo>,
     pub last_game: Option<LastGame>,

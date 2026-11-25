@@ -21,6 +21,7 @@ pub struct KnownGame {
     #[serde(default)]
     pub path_contains: Vec<String>,
     #[serde(default)]
+    #[allow(dead_code)]
     pub engine: Option<String>,
     #[serde(default)]
     pub tips: Vec<String>,

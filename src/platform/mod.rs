@@ -102,6 +102,18 @@ pub struct MemoryInfo {
     pub standby_mb: Option<u64>,
 }
 
+/// Hardware and OS security snapshot for local open-world readiness checks.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HardwareInfo {
+    pub gpu_name: String,
+    pub gpu_vram_mb: u64,
+    pub total_ram_mb: u64,
+    /// `Some(true)` = SSD/NVMe, `Some(false)` = HDD, `None` = unknown.
+    pub system_drive_ssd: Option<bool>,
+    /// Read-only status of Windows Memory Integrity (HVCI). LeanFPS never alters this.
+    pub memory_integrity_on: Option<bool>,
+}
+
 /// RGBA icon, square.
 #[derive(Debug, Clone)]
 pub struct Icon {
@@ -156,6 +168,7 @@ pub trait Platform: Send + Sync {
     /// This process's CPU time in milliseconds and working set in MB.
     fn self_usage(&self) -> (u64, u64);
     fn machine(&self) -> Machine;
+    fn hardware_info(&self) -> HardwareInfo;
     fn exe_icon(&self, exe_path: &str, size: usize) -> Option<Icon>;
 }
 

@@ -43,6 +43,7 @@ impl FrameStats {
         self.hist[i] += 1;
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn stutters_per_min(&self) -> f64 {
         if self.total_ms <= 0.0 {
             0.0
@@ -113,6 +114,7 @@ impl Record {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn stutters_per_min(&self) -> f64 {
         if self.minutes <= 0.0 {
             0.0

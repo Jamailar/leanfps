@@ -8,6 +8,7 @@ mod games;
 mod license;
 mod pergame;
 mod platform;
+mod readiness;
 mod selftest;
 mod session;
 mod store;
@@ -156,12 +157,15 @@ fn run_window(hidden: bool) {
                 on_change: Box::new(move || ctx.request_repaint()),
             };
             {
+                let pf = pf.clone();
                 let shared = shared.clone();
                 let ctx = cc.egui_ctx.clone();
                 std::thread::spawn(move || {
                     let installed = watcher::scan_installed();
+                    let hardware = pf.hardware_info();
                     let mut s = shared.lock().unwrap();
                     s.installed = installed;
+                    s.hardware = Some(hardware);
                     s.version += 1;
                     drop(s);
                     ctx.request_repaint();
