@@ -22,6 +22,66 @@ jobs:
       - name: Release build
         run: cargo build --release --locked
 
+      - name: Verify static CRT (no VC++ runtime DLL imports)
+        shell: pwsh
+        run: |
+          $bytes = [System.IO.File]::ReadAllBytes("target/release/leanfps.exe")
+          $peOff = [BitConverter]::ToUInt32($bytes, 0x3C)
+          if ([System.Text.Encoding]::ASCII.GetString($bytes, $peOff, 4) -ne "PE`0`0") { throw "Invalid PE header" }
+          $numSec = [BitConverter]::ToUInt16($bytes, $peOff + 6)
+          $optSize = [BitConverter]::ToUInt16($bytes, $peOff + 20)
+          $optOff = $peOff + 24
+          if ([BitConverter]::ToUInt16($bytes, $optOff) -ne 0x20B) { throw "Expected PE32+ binary" }
+          $ddOff = $optOff + 112
+          $impRva = [BitConverter]::ToUInt32($bytes, $ddOff + 8)
+          $dlyRva = [BitConverter]::ToUInt32($bytes, $ddOff + 13 * 8)
+          $secOff = $optOff + $optSize
+          $sections = for ($i = 0; $i -lt $numSec; $i++) {
+            $s = $secOff + $i * 40
+            [pscustomobject]@{
+              VSize  = [BitConverter]::ToUInt32($bytes, $s + 8)
+              VAddr  = [BitConverter]::ToUInt32($bytes, $s + 12)
+              RawSz  = [BitConverter]::ToUInt32($bytes, $s + 16)
+              RawPtr = [BitConverter]::ToUInt32($bytes, $s + 20)
+            }
+          }
+          function RvaToOff([uint32]$rva) {
+            foreach ($s in $sections) {
+              $span = [Math]::Max($s.VSize, $s.RawSz)
+              if ($rva -ge $s.VAddr -and $rva -lt ($s.VAddr + $span)) { return $s.RawPtr + ($rva - $s.VAddr) }
+            }
+            throw "RVA 0x$($rva.ToString('X')) not mapped"
+          }
+          function ReadCStr([int]$off) {
+            $end = $off
+            while ($bytes[$end] -ne 0) { $end++ }
+            [System.Text.Encoding]::ASCII.GetString($bytes, $off, $end - $off)
+          }
+          $dlls = New-Object System.Collections.Generic.List[string]
+          if ($impRva -ne 0) {
+            $off = RvaToOff $impRva
+            while ($true) {
+              $nameRva = [BitConverter]::ToUInt32($bytes, $off + 12)
+              if ($nameRva -eq 0) { break }
+              $dlls.Add((ReadCStr (RvaToOff $nameRva)))
+              $off += 20
+            }
+          }
+          if ($dlyRva -ne 0) {
+            $off = RvaToOff $dlyRva
+            while ($true) {
+              $nameRva = [BitConverter]::ToUInt32($bytes, $off + 4)
+              if ($nameRva -eq 0) { break }
+              $dlls.Add((ReadCStr (RvaToOff $nameRva)))
+              $off += 32
+            }
+          }
+          "Imported DLLs ($($dlls.Count)): $($dlls -join ', ')"
+          $forbidden = $dlls | Where-Object { $_ -match '^(vcruntime|msvcp|msvcr|concrt|vcomp|ucrtbase|api-ms-win-crt)' }
+          if ($forbidden) {
+            throw "Non-static CRT DLL imports found: $($forbidden -join ', ')"
+          }
+
       # 12 MB since the Direct3D 12 fallback renderer (about 3 MB) for PCs without OpenGL.
       - name: Size budget (fail above 12 MB, product limit is 20 MB)
         shell: pwsh
